@@ -1,0 +1,446 @@
+{% extends "base_new.html" %}
+
+{% block title %}Welcome - Grant Proposal Generator{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hero {
+        background: linear-gradient(135deg, var(--primary-navy), var(--primary-blue));
+        color: white;
+        padding: var(--spacing-2xl) 0;
+        text-align: center;
+        min-height: 500px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .hero-content {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 0 var(--spacing-xl);
+    }
+
+    .hero h1 {
+        color: white;
+        font-size: 3rem;
+        margin-bottom: var(--spacing-lg);
+        line-height: 1.2;
+    }
+
+    .hero p {
+        font-size: 1.25rem;
+        margin-bottom: var(--spacing-2xl);
+        opacity: 0.95;
+    }
+
+    .cta-buttons {
+        display: flex;
+        gap: var(--spacing-lg);
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .btn-large {
+        padding: var(--spacing-lg) var(--spacing-2xl);
+        font-size: 1.125rem;
+    }
+
+    .btn-white {
+        background: white;
+        color: var(--primary-navy);
+    }
+
+    .btn-white:hover {
+        background: var(--gray-100);
+        color: var(--primary-blue);
+    }
+
+    .features {
+        padding: var(--spacing-2xl) 0;
+    }
+
+    .features-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: var(--spacing-2xl);
+        margin-top: var(--spacing-2xl);
+    }
+
+    .feature-card {
+        text-align: center;
+        padding: var(--spacing-2xl);
+    }
+
+    .feature-icon {
+        width: 80px;
+        height: 80px;
+        background: linear-gradient(135deg, var(--primary-blue), var(--accent-teal));
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2rem;
+        margin: 0 auto var(--spacing-lg);
+    }
+
+    .feature-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-bottom: var(--spacing-md);
+        color: var(--gray-900);
+    }
+
+    .feature-description {
+        color: var(--gray-600);
+        line-height: 1.7;
+    }
+
+    .funding-bodies {
+        background: var(--gray-100);
+        padding: var(--spacing-2xl) 0;
+    }
+
+    .funding-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--spacing-lg);
+        margin-top: var(--spacing-2xl);
+    }
+
+    .funding-badge {
+        background: white;
+        padding: var(--spacing-lg);
+        border-radius: var(--radius-lg);
+        text-align: center;
+        font-weight: 500;
+        color: var(--gray-700);
+        box-shadow: var(--shadow-sm);
+        transition: all 0.2s;
+    }
+
+    .funding-badge:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+    }
+
+    .stats-section {
+        padding: var(--spacing-2xl) 0;
+        background: linear-gradient(135deg, var(--primary-navy), var(--primary-blue));
+        color: white;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--spacing-2xl);
+        margin-top: var(--spacing-xl);
+    }
+
+    .stat {
+        text-align: center;
+    }
+
+    .stat-number {
+        font-size: 3rem;
+        font-weight: 700;
+        margin-bottom: var(--spacing-sm);
+    }
+
+    .stat-label {
+        font-size: 1rem;
+        opacity: 0.9;
+    }
+
+    .how-it-works {
+        padding: var(--spacing-2xl) 0;
+    }
+
+    .steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: var(--spacing-2xl);
+        margin-top: var(--spacing-2xl);
+    }
+
+    .step {
+        position: relative;
+        padding: var(--spacing-xl);
+        background: white;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+    }
+
+    .step-number {
+        position: absolute;
+        top: -20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 40px;
+        height: 40px;
+        background: var(--primary-blue);
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 1.25rem;
+    }
+
+    .step-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: var(--spacing-lg) 0 var(--spacing-md);
+        color: var(--gray-900);
+    }
+
+    .step-description {
+        color: var(--gray-600);
+        line-height: 1.6;
+    }
+
+    @media (max-width: 768px) {
+        .hero h1 {
+            font-size: 2rem;
+        }
+
+        .cta-buttons {
+            flex-direction: column;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="hero">
+    <div class="hero-content">
+        <h1>
+            <i class="fas fa-graduation-cap"></i><br>
+            AI-Powered Grant Proposal Generator
+        </h1>
+        <p>
+            Create professional, well-cited grant proposals in minutes using advanced AI and comprehensive academic research.
+            Trusted by researchers worldwide for Horizon Europe, NSF, NIH, and more.
+        </p>
+        <div class="cta-buttons">
+            <a href="{% url 'register' %}" class="btn btn-large btn-white">
+                <i class="fas fa-rocket"></i>
+                Get Started Free
+            </a>
+            <a href="{% url 'login' %}" class="btn btn-large btn-outline" style="color: white; border-color: white;">
+                <i class="fas fa-sign-in-alt"></i>
+                Sign In
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Features Section -->
+<section class="features">
+    <div class="container">
+        <h2 class="text-center">Why Choose Our Platform?</h2>
+        <p class="text-center text-muted" style="font-size: 1.125rem;">
+            The most advanced AI-powered grant proposal generator with real citations
+        </p>
+
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <h3 class="feature-title">AI-Powered Generation</h3>
+                <p class="feature-description">
+                    Uses GPT-4 with advanced RAG technology to create comprehensive, evidence-based proposals
+                    that meet funding body requirements.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-quote-right"></i>
+                </div>
+                <h3 class="feature-title">Perfect Citations</h3>
+                <p class="feature-description">
+                    Automatically searches 150+ academic papers from arXiv, OpenAlex, and Semantic Scholar.
+                    Every citation is real and verifiable - no hallucinations!
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-university"></i>
+                </div>
+                <h3 class="feature-title">10+ Funding Bodies</h3>
+                <p class="feature-description">
+                    Custom templates for Horizon Europe, NSF, NIH, ERC, Marie Curie, DARPA, and more.
+                    Each with specific requirements and guidelines.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-clock"></i>
+                </div>
+                <h3 class="feature-title">Save Time</h3>
+                <p class="feature-description">
+                    Generate a complete 30-70 page proposal in minutes instead of weeks.
+                    Focus on refining your research, not formatting.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-chart-line"></i>
+                </div>
+                <h3 class="feature-title">Analytics & Insights</h3>
+                <p class="feature-description">
+                    Track research trends, identify gaps, discover key researchers,
+                    and see publication timelines automatically.
+                </p>
+            </div>
+
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-file-export"></i>
+                </div>
+                <h3 class="feature-title">Multiple Formats</h3>
+                <p class="feature-description">
+                    Export your proposal in DOCX, PDF, LaTeX, or JSON format.
+                    Ready for submission with proper formatting and styling.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Funding Bodies Section -->
+<section class="funding-bodies">
+    <div class="container">
+        <h2 class="text-center">Supported Funding Bodies</h2>
+        <p class="text-center text-muted" style="font-size: 1.125rem;">
+            Custom templates for major international funding organizations
+        </p>
+
+        <div class="funding-grid">
+            <div class="funding-badge">
+                <i class="fas fa-flag-eu"></i> Horizon Europe
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-shield-alt"></i> Europol
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-flag-usa"></i> NSF
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-heartbeat"></i> NIH
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-star"></i> ERC
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-graduation-cap"></i> Marie Curie
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-pound-sign"></i> Wellcome Trust
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-globe"></i> Gates Foundation
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-fighter-jet"></i> DARPA
+            </div>
+            <div class="funding-badge">
+                <i class="fas fa-landmark"></i> UKRI
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Stats Section -->
+<section class="stats-section">
+    <div class="container">
+        <h2 class="text-center" style="color: white;">Powered by Advanced Technology</h2>
+        <div class="stats-grid">
+            <div class="stat">
+                <div class="stat-number">150+</div>
+                <div class="stat-label">Papers Analyzed Per Proposal</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">10+</div>
+                <div class="stat-label">Funding Body Templates</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">100%</div>
+                <div class="stat-label">Real Citations (No Hallucinations)</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">3</div>
+                <div class="stat-label">Academic Databases Searched</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works Section -->
+<section class="how-it-works">
+    <div class="container">
+        <h2 class="text-center">How It Works</h2>
+        <p class="text-center text-muted" style="font-size: 1.125rem;">
+            From idea to submission-ready proposal in 4 simple steps
+        </p>
+
+        <div class="steps">
+            <div class="step">
+                <div class="step-number">1</div>
+                <h3 class="step-title">Select Funding Body</h3>
+                <p class="step-description">
+                    Choose from 10+ international funding organizations including Horizon Europe, NSF, NIH, ERC, and more.
+                </p>
+            </div>
+
+            <div class="step">
+                <div class="step-number">2</div>
+                <h3 class="step-title">Enter Your Research</h3>
+                <p class="step-description">
+                    Provide your research title, keywords, and a brief description of your proposed project.
+                </p>
+            </div>
+
+            <div class="step">
+                <div class="step-number">3</div>
+                <h3 class="step-title">AI Generates Proposal</h3>
+                <p class="step-description">
+                    Our system searches academic databases, retrieves 150+ relevant papers, and generates a complete proposal with perfect citations.
+                </p>
+            </div>
+
+            <div class="step">
+                <div class="step-number">4</div>
+                <h3 class="step-title">Review & Submit</h3>
+                <p class="step-description">
+                    Review your proposal, make any refinements, and export in your preferred format ready for submission.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA Section -->
+<section class="hero" style="min-height: 300px;">
+    <div class="hero-content">
+        <h2 style="color: white; font-size: 2rem;">Ready to Create Your Winning Proposal?</h2>
+        <p style="font-size: 1.125rem;">
+            Join researchers worldwide who trust our AI-powered platform
+        </p>
+        <div class="cta-buttons">
+            <a href="{% url 'register' %}" class="btn btn-large btn-white">
+                <i class="fas fa-rocket"></i>
+                Start Free Now
+            </a>
+        </div>
+    </div>
+</section>
+{% endblock %}
