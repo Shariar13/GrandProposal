@@ -1,0 +1,550 @@
+{% extends "base_new.html" %}
+
+{% block title %}{{ proposal.title }} - Grant Proposal Generator{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+<style>
+    .proposal-header {
+        background: linear-gradient(135deg, var(--primary-navy), var(--primary-blue));
+        color: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-xl);
+        margin-bottom: var(--spacing-2xl);
+    }
+
+    .proposal-header h1 {
+        color: white;
+        margin-bottom: var(--spacing-md);
+    }
+
+    .proposal-meta {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--spacing-lg);
+        margin-top: var(--spacing-lg);
+    }
+
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+
+    .action-toolbar {
+        background: white;
+        padding: var(--spacing-lg);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        margin-bottom: var(--spacing-xl);
+        display: flex;
+        gap: var(--spacing-md);
+        flex-wrap: wrap;
+        position: sticky;
+        top: 80px;
+        z-index: 100;
+    }
+
+    .section-editor {
+        background: white;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        margin-bottom: var(--spacing-xl);
+        overflow: hidden;
+    }
+
+    .section-header {
+        background: var(--gray-100);
+        padding: var(--spacing-lg);
+        border-bottom: 2px solid var(--primary-blue);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-header h3 {
+        margin: 0;
+        color: var(--primary-navy);
+    }
+
+    .section-actions {
+        display: flex;
+        gap: var(--spacing-sm);
+    }
+
+    .section-content {
+        padding: var(--spacing-xl);
+    }
+
+    .editor-container {
+        min-height: 300px;
+        border: 1px solid var(--gray-300);
+        border-radius: var(--radius-md);
+    }
+
+    .ql-editor {
+        font-family: var(--font-serif);
+        font-size: 11pt;
+        line-height: 1.8;
+        min-height: 250px;
+    }
+
+    .word-count {
+        text-align: right;
+        color: var(--gray-500);
+        font-size: 0.875rem;
+        margin-top: var(--spacing-sm);
+    }
+
+    .ai-edit-panel {
+        display: none;
+        background: var(--gray-50);
+        padding: var(--spacing-lg);
+        border-top: 2px solid var(--accent-teal);
+        border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    }
+
+    .ai-edit-panel.active {
+        display: block;
+    }
+
+    .version-history {
+        background: white;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        padding: var(--spacing-xl);
+    }
+
+    .version-item {
+        padding: var(--spacing-md);
+        border-left: 3px solid var(--primary-blue);
+        margin-bottom: var(--spacing-md);
+        background: var(--gray-50);
+        border-radius: var(--radius-sm);
+    }
+
+    .version-item.current {
+        border-left-color: var(--success);
+        background: #d1fae5;
+    }
+
+    .export-options {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: var(--spacing-md);
+    }
+
+    .export-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: var(--spacing-lg);
+        background: white;
+        border: 2px solid var(--gray-300);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all 0.2s;
+        text-decoration: none;
+        color: var(--gray-700);
+    }
+
+    .export-btn:hover {
+        border-color: var(--primary-blue);
+        background: var(--gray-50);
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+    }
+
+    .export-btn i {
+        font-size: 2rem;
+        margin-bottom: var(--spacing-sm);
+        color: var(--primary-blue);
+    }
+
+    .sidebar {
+        position: sticky;
+        top: 140px;
+    }
+
+    .toc {
+        background: white;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        padding: var(--spacing-lg);
+        margin-bottom: var(--spacing-lg);
+    }
+
+    .toc-item {
+        padding: var(--spacing-sm);
+        margin-bottom: var(--spacing-xs);
+        cursor: pointer;
+        border-radius: var(--radius-sm);
+        transition: all 0.2s;
+    }
+
+    .toc-item:hover {
+        background: var(--gray-100);
+        color: var(--primary-blue);
+    }
+
+    .toc-item.active {
+        background: var(--primary-blue);
+        color: white;
+    }
+
+    .selection-tooltip {
+        position: absolute;
+        background: var(--gray-900);
+        color: white;
+        padding: var(--spacing-sm) var(--spacing-md);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+        display: none;
+        z-index: 1000;
+        gap: var(--spacing-sm);
+    }
+
+    .selection-tooltip button {
+        background: transparent;
+        border: 1px solid white;
+        color: white;
+        padding: var(--spacing-xs) var(--spacing-sm);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+
+    .selection-tooltip button:hover {
+        background: white;
+        color: var(--gray-900);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="grid" style="grid-template-columns: 1fr 300px; gap: var(--spacing-2xl);">
+        <!-- Main Content -->
+        <div>
+            <!-- Proposal Header -->
+            <div class="proposal-header">
+                <a href="{% url 'my_proposals' %}" class="btn btn-secondary" style="margin-bottom: var(--spacing-md);">
+                    <i class="fas fa-arrow-left"></i> Back to My Proposals
+                </a>
+                <h1>{{ proposal.title }}</h1>
+                <p>{{ proposal.description }}</p>
+                <div class="proposal-meta">
+                    <div class="meta-item">
+                        <i class="fas fa-file-alt"></i>
+                        <span>{{ proposal.word_count }} words</span>
+                    </div>
+                    <div class="meta-item">
+                        <i class="fas fa-quote-right"></i>
+                        <span>{{ proposal.citation_count }} citations</span>
+                    </div>
+                    <div class="meta-item">
+                        <i class="fas fa-calendar"></i>
+                        <span>{{ proposal.created_at|date:"M d, Y" }}</span>
+                    </div>
+                    <div class="meta-item">
+                        <i class="fas fa-code-branch"></i>
+                        <span>Version {{ proposal.version }}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="badge badge-{{ proposal.status }}">{{ proposal.get_status_display }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Toolbar -->
+            <div class="action-toolbar">
+                <button class="btn btn-primary" onclick="saveAllSections()">
+                    <i class="fas fa-save"></i> Save All
+                </button>
+                <button class="btn btn-secondary" onclick="togglePreview()">
+                    <i class="fas fa-eye"></i> Preview
+                </button>
+                <button class="btn btn-secondary" onclick="createNewVersion()">
+                    <i class="fas fa-code-branch"></i> New Version
+                </button>
+                <button class="btn btn-secondary" onclick="showExportOptions()">
+                    <i class="fas fa-download"></i> Export
+                </button>
+                <button class="btn btn-secondary" onclick="shareProposal()">
+                    <i class="fas fa-share-alt"></i> Share
+                </button>
+            </div>
+
+            <!-- Sections -->
+            {% for section in sections %}
+            <div class="section-editor" id="section-{{ section.id }}">
+                <div class="section-header">
+                    <h3>{{ section.section_order }}. {{ section.section_name }}</h3>
+                    <div class="section-actions">
+                        <button class="btn btn-secondary btn-sm" onclick="toggleAIEdit({{ section.id }})">
+                            <i class="fas fa-magic"></i> AI Edit
+                        </button>
+                        <button class="btn btn-secondary btn-sm" onclick="expandSection({{ section.id }})">
+                            <i class="fas fa-expand"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="section-content">
+                    <div id="editor-{{ section.id }}" class="editor-container">{{ section.content }}</div>
+                    <div class="word-count" id="wordcount-{{ section.id }}">{{ section.word_count }} words</div>
+                </div>
+                <div class="ai-edit-panel" id="ai-panel-{{ section.id }}">
+                    <h4><i class="fas fa-robot"></i> AI-Powered Editing</h4>
+                    <p class="text-muted">Select text above and give instructions for AI to edit it</p>
+                    <div class="form-group">
+                        <label class="form-label">Instruction:</label>
+                        <input type="text" class="form-input" id="ai-instruction-{{ section.id }}"
+                               placeholder="e.g., Make it more concise, Add more technical details, Improve clarity">
+                    </div>
+                    <div class="flex gap-1">
+                        <button class="btn btn-primary" onclick="applyAIEdit({{ section.id }})">
+                            <i class="fas fa-check"></i> Apply AI Edit
+                        </button>
+                        <button class="btn btn-secondary" onclick="toggleAIEdit({{ section.id }})">
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            <!-- Bibliography -->
+            <div class="section-editor">
+                <div class="section-header">
+                    <h3><i class="fas fa-book"></i> References</h3>
+                </div>
+                <div class="section-content">
+                    <div class="bibliography">
+                        {% for citation in proposal.citations_data.apa %}
+                            <div class="citation-item">{{ forloop.counter }}. {{ citation }}</div>
+                        {% empty %}
+                            <p class="text-muted">No citations yet</p>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <!-- Table of Contents -->
+            <div class="toc">
+                <h4 style="margin-bottom: var(--spacing-md);">Contents</h4>
+                {% for section in sections %}
+                <div class="toc-item" onclick="scrollToSection({{ section.id }})">
+                    {{ section.section_order }}. {{ section.section_name }}
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Export Options -->
+            <div class="card">
+                <div class="card-header">Export</div>
+                <div class="export-options">
+                    <a href="{% url 'export_proposal' proposal.id 'docx' %}" class="export-btn">
+                        <i class="fas fa-file-word"></i>
+                        <span>DOCX</span>
+                    </a>
+                    <a href="{% url 'export_proposal' proposal.id 'pdf' %}" class="export-btn">
+                        <i class="fas fa-file-pdf"></i>
+                        <span>PDF</span>
+                    </a>
+                    <a href="{% url 'export_proposal' proposal.id 'latex' %}" class="export-btn">
+                        <i class="fas fa-file-code"></i>
+                        <span>LaTeX</span>
+                    </a>
+                    <a href="{% url 'export_proposal' proposal.id 'markdown' %}" class="export-btn">
+                        <i class="fas fa-markdown"></i>
+                        <span>Markdown</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Version History -->
+            <div class="version-history">
+                <h4 style="margin-bottom: var(--spacing-md);">Version History</h4>
+                {% for version in all_versions %}
+                <div class="version-item {% if version.is_latest %}current{% endif %}">
+                    <div style="font-weight: 600;">Version {{ version.version }}</div>
+                    <div style="font-size: 0.875rem; color: var(--gray-600);">
+                        {{ version.created_at|date:"M d, Y H:i" }}
+                    </div>
+                    {% if version.is_latest %}
+                    <span class="badge badge-success" style="margin-top: var(--spacing-xs);">Current</span>
+                    {% else %}
+                    <a href="{% url 'proposal_detail' version.id %}" style="font-size: 0.875rem;">View</a>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Selection Tooltip -->
+<div class="selection-tooltip" id="selectionTooltip">
+    <button onclick="editSelectedText()"><i class="fas fa-magic"></i> AI Edit</button>
+    <button onclick="highlightText()"><i class="fas fa-highlighter"></i> Highlight</button>
+    <button onclick="addComment()"><i class="fas fa-comment"></i> Comment</button>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.quilljs.com/1.3.6/quill.js"></script>
+<script>
+    // Initialize Quill editors for each section
+    const editors = {};
+
+    {% for section in sections %}
+    editors[{{ section.id }}] = new Quill('#editor-{{ section.id }}', {
+        theme: 'snow',
+        modules: {
+            toolbar: [
+                [{ 'header': [1, 2, 3, false] }],
+                ['bold', 'italic', 'underline', 'strike'],
+                ['blockquote', 'code-block'],
+                [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                [{ 'script': 'sub'}, { 'script': 'super' }],
+                [{ 'indent': '-1'}, { 'indent': '+1' }],
+                ['link', 'image'],
+                ['clean']
+            ]
+        }
+    });
+
+    // Update word count on text change
+    editors[{{ section.id }}].on('text-change', function() {
+        updateWordCount({{ section.id }});
+    });
+    {% endfor %}
+
+    function updateWordCount(sectionId) {
+        const text = editors[sectionId].getText();
+        const wordCount = text.trim().split(/\s+/).length;
+        document.getElementById(`wordcount-${sectionId}`).textContent = `${wordCount} words`;
+    }
+
+    function saveAllSections() {
+        let saved = 0;
+        const total = Object.keys(editors).length;
+
+        Object.keys(editors).forEach(sectionId => {
+            const content = editors[sectionId].root.innerHTML;
+
+            fetch('{% url "update_section_content" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: `section_id=${sectionId}&content=${encodeURIComponent(content)}`
+            })
+            .then(response => response.json())
+            .then(data => {
+                saved++;
+                if (saved === total) {
+                    alert('All sections saved successfully!');
+                }
+            })
+            .catch(error => {
+                console.error('Error saving section:', error);
+                alert('Error saving sections');
+            });
+        });
+    }
+
+    function toggleAIEdit(sectionId) {
+        const panel = document.getElementById(`ai-panel-${sectionId}`);
+        panel.classList.toggle('active');
+    }
+
+    function applyAIEdit(sectionId) {
+        const instruction = document.getElementById(`ai-instruction-${sectionId}`).value;
+        const selectedText = editors[sectionId].getSelection();
+
+        if (!instruction) {
+            alert('Please provide an instruction');
+            return;
+        }
+
+        fetch('{% url "edit_section_with_ai" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: `section_id=${sectionId}&instruction=${encodeURIComponent(instruction)}&selected_text=${encodeURIComponent(selectedText ? editors[sectionId].getText(selectedText.index, selectedText.length) : '')}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (selectedText) {
+                    editors[sectionId].deleteText(selectedText.index, selectedText.length);
+                    editors[sectionId].insertText(selectedText.index, data.edited_text);
+                } else {
+                    editors[sectionId].setText(data.edited_text);
+                }
+                toggleAIEdit(sectionId);
+                alert('AI edit applied successfully!');
+            } else {
+                alert('Error: ' + data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error applying AI edit');
+        });
+    }
+
+    function scrollToSection(sectionId) {
+        document.getElementById(`section-${sectionId}`).scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+        });
+    }
+
+    function expandSection(sectionId) {
+        // Full screen editor
+        alert('Full screen editor coming soon!');
+    }
+
+    function togglePreview() {
+        alert('Preview mode coming soon!');
+    }
+
+    function createNewVersion() {
+        if (confirm('Create a new version of this proposal?')) {
+            // Create new version logic
+            alert('New version feature coming soon!');
+        }
+    }
+
+    function showExportOptions() {
+        alert('Choose an export format from the sidebar');
+    }
+
+    function shareProposal() {
+        alert('Share feature coming soon!');
+    }
+
+    // Text selection for AI editing
+    document.addEventListener('mouseup', function(e) {
+        const selection = window.getSelection();
+        const text = selection.toString();
+
+        if (text.length > 0) {
+            const tooltip = document.getElementById('selectionTooltip');
+            tooltip.style.display = 'flex';
+            tooltip.style.left = e.pageX + 'px';
+            tooltip.style.top = (e.pageY - 50) + 'px';
+        } else {
+            document.getElementById('selectionTooltip').style.display = 'none';
+        }
+    });
+</script>
+{% endblock %}
