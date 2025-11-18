@@ -76,53 +76,70 @@ class EnhancedRAGSystem:
 
     def _parse_arxiv_entry(self, entry) -> Dict:
         """Parse arXiv XML entry into structured data"""
-        ns = {'atom': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
+        try:
+            ns = {'atom': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
 
-        title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
-        summary = entry.find('atom:summary', ns).text.strip().replace('\n', ' ')
+            # Safely extract title
+            title_elem = entry.find('atom:title', ns)
+            if title_elem is None or not title_elem.text:
+                return None
+            title = title_elem.text.strip().replace('\n', ' ')
 
-        # Authors
-        authors = []
-        for author in entry.findall('atom:author', ns):
-            name_elem = author.find('atom:name', ns)
-            if name_elem is not None:
-                authors.append(name_elem.text.strip())
+            # Safely extract summary
+            summary_elem = entry.find('atom:summary', ns)
+            summary = summary_elem.text.strip().replace('\n', ' ') if summary_elem is not None and summary_elem.text else ''
 
-        # Publication date
-        published = entry.find('atom:published', ns).text.strip()
-        year = published.split('-')[0]
+            # Authors
+            authors = []
+            for author in entry.findall('atom:author', ns):
+                name_elem = author.find('atom:name', ns)
+                if name_elem is not None and name_elem.text:
+                    authors.append(name_elem.text.strip())
 
-        # arXiv ID and URL
-        arxiv_id = entry.find('atom:id', ns).text.strip().split('/abs/')[-1]
-        url = entry.find('atom:id', ns).text.strip()
+            # Publication date
+            published_elem = entry.find('atom:published', ns)
+            if published_elem is None or not published_elem.text:
+                year = '2024'
+            else:
+                year = published_elem.text.strip().split('-')[0]
 
-        # Categories
-        categories = []
-        for category in entry.findall('atom:category', ns):
-            term = category.get('term')
-            if term:
-                categories.append(term)
+            # arXiv ID and URL
+            id_elem = entry.find('atom:id', ns)
+            if id_elem is None or not id_elem.text:
+                return None
+            arxiv_id = id_elem.text.strip().split('/abs/')[-1]
+            url = id_elem.text.strip()
 
-        # DOI if available
-        doi = None
-        doi_elem = entry.find('arxiv:doi', ns)
-        if doi_elem is not None:
-            doi = doi_elem.text.strip()
+            # Categories
+            categories = []
+            for category in entry.findall('atom:category', ns):
+                term = category.get('term')
+                if term:
+                    categories.append(term)
 
-        return {
-            'source': 'arXiv',
-            'id': arxiv_id,
-            'title': title,
-            'authors': authors,
-            'year': year,
-            'abstract': summary,
-            'url': url,
-            'doi': doi,
-            'categories': categories,
-            'citation_key': self._generate_citation_key(authors, year, title),
-            'apa_citation': self._format_apa_citation(authors, year, title, url, doi),
-            'bibtex': self._generate_bibtex(authors, year, title, arxiv_id, doi)
-        }
+            # DOI if available
+            doi = None
+            doi_elem = entry.find('arxiv:doi', ns)
+            if doi_elem is not None and doi_elem.text:
+                doi = doi_elem.text.strip()
+
+            return {
+                'source': 'arXiv',
+                'id': arxiv_id,
+                'title': title,
+                'authors': authors,
+                'year': year,
+                'abstract': summary,
+                'url': url,
+                'doi': doi,
+                'categories': categories,
+                'citation_key': self._generate_citation_key(authors, year, title),
+                'apa_citation': self._format_apa_citation(authors, year, title, url, doi),
+                'bibtex': self._generate_bibtex(authors, year, title, arxiv_id, doi)
+            }
+        except Exception as e:
+            print(f"Error parsing arXiv entry: {e}")
+            return None
 
     def search_openalex(self, query: str, max_results: int = 50) -> List[Dict]:
         """Search OpenAlex for academic papers"""
@@ -160,58 +177,66 @@ class EnhancedRAGSystem:
 
     def _parse_openalex_result(self, result: Dict) -> Dict:
         """Parse OpenAlex result into structured data"""
-        title = result.get('title', 'Untitled')
+        try:
+            title = result.get('title', 'Untitled')
 
-        # Authors
-        authors = []
-        for authorship in result.get('authorships', []):
-            author = authorship.get('author', {})
-            display_name = author.get('display_name')
-            if display_name:
-                authors.append(display_name)
+            # Skip if no title
+            if not title or title == 'Untitled':
+                return None
 
-        # Publication year
-        year = str(result.get('publication_year', 'n.d.'))
+            # Authors
+            authors = []
+            for authorship in result.get('authorships', []):
+                author = authorship.get('author', {})
+                display_name = author.get('display_name')
+                if display_name:
+                    authors.append(display_name)
 
-        # Abstract
-        abstract = ''
-        if result.get('abstract_inverted_index'):
-            # Reconstruct abstract from inverted index
-            inverted_index = result['abstract_inverted_index']
-            word_positions = []
-            for word, positions in inverted_index.items():
-                for pos in positions:
-                    word_positions.append((pos, word))
-            word_positions.sort()
-            abstract = ' '.join([word for _, word in word_positions])
+            # Publication year
+            year = str(result.get('publication_year', '2024'))
 
-        # DOI
-        doi = result.get('doi', '').replace('https://doi.org/', '')
+            # Abstract
+            abstract = ''
+            if result.get('abstract_inverted_index'):
+                # Reconstruct abstract from inverted index
+                inverted_index = result['abstract_inverted_index']
+                word_positions = []
+                for word, positions in inverted_index.items():
+                    for pos in positions:
+                        word_positions.append((pos, word))
+                word_positions.sort()
+                abstract = ' '.join([word for _, word in word_positions])
 
-        # URL
-        url = result.get('doi', result.get('id', ''))
+            # DOI
+            doi = result.get('doi', '').replace('https://doi.org/', '') if result.get('doi') else None
 
-        # Citations count
-        cited_by_count = result.get('cited_by_count', 0)
+            # URL
+            url = result.get('doi', result.get('id', ''))
 
-        # Concepts/Keywords
-        concepts = [concept.get('display_name') for concept in result.get('concepts', [])[:10]]
+            # Citations count
+            cited_by_count = result.get('cited_by_count', 0)
 
-        return {
-            'source': 'OpenAlex',
-            'id': result.get('id', ''),
-            'title': title,
-            'authors': authors,
-            'year': year,
-            'abstract': abstract,
-            'url': url,
-            'doi': doi,
-            'cited_by_count': cited_by_count,
-            'concepts': concepts,
-            'citation_key': self._generate_citation_key(authors, year, title),
-            'apa_citation': self._format_apa_citation(authors, year, title, url, doi),
-            'bibtex': self._generate_bibtex(authors, year, title, doi=doi)
-        }
+            # Concepts/Keywords
+            concepts = [concept.get('display_name') for concept in result.get('concepts', [])[:10]]
+
+            return {
+                'source': 'OpenAlex',
+                'id': result.get('id', ''),
+                'title': title,
+                'authors': authors,
+                'year': year,
+                'abstract': abstract,
+                'url': url,
+                'doi': doi,
+                'cited_by_count': cited_by_count,
+                'concepts': concepts,
+                'citation_key': self._generate_citation_key(authors, year, title),
+                'apa_citation': self._format_apa_citation(authors, year, title, url, doi),
+                'bibtex': self._generate_bibtex(authors, year, title, doi=doi)
+            }
+        except Exception as e:
+            print(f"Error parsing OpenAlex result: {e}")
+            return None
 
     def search_semantic_scholar(self, query: str, max_results: int = 50) -> List[Dict]:
         """Search Semantic Scholar for academic papers"""
@@ -334,8 +359,16 @@ class EnhancedRAGSystem:
             all_papers.extend(papers)
 
         for paper in all_papers:
+            # Skip None papers
+            if paper is None:
+                continue
+
+            # Skip papers without title
+            if not paper.get('title'):
+                continue
+
             title_normalized = paper['title'].lower().strip()
-            doi = paper.get('doi', '').strip()
+            doi = paper.get('doi', '').strip() if paper.get('doi') else ''
 
             # Check for duplicates
             is_duplicate = False
