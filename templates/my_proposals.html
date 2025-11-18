@@ -1,0 +1,65 @@
+{% extends "base_new.html" %}
+
+{% block title %}My Proposals - Grant Proposal Generator{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="flex justify-between items-center mb-2">
+        <h1>My Proposals</h1>
+        <a href="{% url 'dashboard' %}" class="btn btn-primary">
+            <i class="fas fa-plus"></i> Create New Proposal
+        </a>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-2">
+        <form method="get" class="flex gap-1">
+            <select name="status" class="form-select">
+                <option value="">All Status</option>
+                <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Draft</option>
+                <option value="in_progress" {% if status_filter == 'in_progress' %}selected{% endif %}>In Progress</option>
+                <option value="final" {% if status_filter == 'final' %}selected{% endif %}>Final</option>
+            </select>
+
+            <select name="type" class="form-select">
+                <option value="">All Types</option>
+                {% for pt in proposal_types %}
+                <option value="{{ pt.code }}" {% if type_filter == pt.code %}selected{% endif %}>{{ pt.name }}</option>
+                {% endfor %}
+            </select>
+
+            <button type="submit" class="btn btn-secondary">Filter</button>
+        </form>
+    </div>
+
+    <!-- Proposals Grid -->
+    <div class="grid grid-2">
+        {% for proposal in proposals %}
+        <div class="card">
+            <h3>{{ proposal.title }}</h3>
+            <p class="text-muted">{{ proposal.description|truncatewords:20 }}</p>
+
+            <div style="display: flex; gap: var(--spacing-md); margin: var(--spacing-md) 0; font-size: 0.875rem;">
+                <span><i class="fas fa-calendar"></i> {{ proposal.created_at|date:"M d, Y" }}</span>
+                <span><i class="fas fa-file-word"></i> {{ proposal.word_count }} words</span>
+                <span class="badge badge-info">{{ proposal.get_status_display }}</span>
+            </div>
+
+            <div class="flex gap-1">
+                <a href="{% url 'proposal_detail' proposal.id %}" class="btn btn-primary">
+                    <i class="fas fa-eye"></i> View
+                </a>
+                <a href="{% url 'export_proposal' proposal.id 'txt' %}" class="btn btn-secondary">
+                    <i class="fas fa-download"></i> Export
+                </a>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card">
+            <p class="text-center text-muted">No proposals yet. Create your first one!</p>
+            <a href="{% url 'dashboard' %}" class="btn btn-primary" style="margin: 0 auto;">Get Started</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
