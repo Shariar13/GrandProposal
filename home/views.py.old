@@ -1,0 +1,1624 @@
+from django.shortcuts import render
+from django.http import StreamingHttpResponse
+import requests
+from sentence_transformers import SentenceTransformer
+import numpy as np
+from typing import List, Dict, Generator, Tuple
+import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import random
+import re
+from collections import defaultdict
+
+
+class OpenAccessRetriever:
+    def __init__(self):
+        self.arxiv_base = "http://export.arxiv.org/api/query"
+        self.openalex_base = "https://api.openalex.org/works"
+        self.crossref_base = "https://api.crossref.org/works"
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': 'GrantProposalGenerator/1.0'})
+        
+    def search_arxiv(self, query: str, max_results: int = 20) -> List[Dict]:
+        params = {
+            'search_query': f'all:{query}',
+            'start': 0,
+            'max_results': max_results,
+            'sortBy': 'relevance',
+            'sortOrder': 'descending'
+        }
+        
+        try:
+            response = self.session.get(self.arxiv_base, params=params, timeout=30)
+            if response.status_code == 200:
+                return self._parse_arxiv_xml(response.text)
+        except Exception as e:
+            print(f"arXiv error: {e}")
+        return []
+    
+    def search_openalex(self, query: str, max_results: int = 20) -> List[Dict]:
+        params = {
+            'search': query,
+            'filter': 'is_oa:true',
+            'per-page': max_results,
+            'mailto': 'researcher@institution.edu'
+        }
+        
+        try:
+            response = self.session.get(self.openalex_base, params=params, timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                results = []
+                for work in data.get('results', []):
+                    abstract = work.get('abstract_inverted_index', {})
+                    abstract_text = self._reconstruct_abstract(abstract) if abstract else ''
+                    
+                    results.append({
+                        'title': work.get('title', ''),
+                        'abstract': abstract_text,
+                        'authors': [a.get('author', {}).get('display_name', '') for a in work.get('authorships', [])[:5]],
+                        'year': work.get('publication_year', ''),
+                        'doi': work.get('doi', '').replace('https://doi.org/', '') if work.get('doi') else '',
+                        'url': work.get('doi', ''),
+                        'source': 'OpenAlex',
+                        'venue': work.get('primary_location', {}).get('source', {}).get('display_name', ''),
+                        'cited_by_count': work.get('cited_by_count', 0)
+                    })
+                return results
+        except Exception as e:
+            print(f"OpenAlex error: {e}")
+        return []
+    
+    def search_crossref(self, query: str, max_results: int = 20) -> List[Dict]:
+        params = {
+            'query': query,
+            'rows': max_results,
+            'filter': 'type:journal-article',
+            'select': 'DOI,title,author,abstract,published,container-title'
+        }
+        
+        for attempt in range(3):
+            try:
+                response = self.session.get(self.crossref_base, params=params, timeout=45)
+                if response.status_code == 200:
+                    data = response.json()
+                    results = []
+                    for item in data.get('message', {}).get('items', []):
+                        title = item.get('title', [''])[0] if item.get('title') else ''
+                        authors = []
+                        for a in item.get('author', [])[:5]:
+                            name = f"{a.get('given', '')} {a.get('family', '')}".strip()
+                            if name:
+                                authors.append(name)
+                        
+                        year = ''
+                        if 'published' in item:
+                            date_parts = item['published'].get('date-parts', [[]])
+                            if date_parts and date_parts[0]:
+                                year = str(date_parts[0][0])
+                        
+                        results.append({
+                            'title': title,
+                            'abstract': item.get('abstract', ''),
+                            'authors': authors,
+                            'year': year,
+                            'doi': item.get('DOI', ''),
+                            'url': f"https://doi.org/{item.get('DOI', '')}",
+                            'source': 'Crossref',
+                            'venue': item.get('container-title', [''])[0] if item.get('container-title') else ''
+                        })
+                    return results
+            except requests.exceptions.Timeout:
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+            except Exception as e:
+                print(f"Crossref error: {e}")
+                break
+        return []
+    
+    def _reconstruct_abstract(self, inverted_index: Dict) -> str:
+        word_positions = []
+        for word, positions in inverted_index.items():
+            for pos in positions:
+                word_positions.append((pos, word))
+        word_positions.sort()
+        return ' '.join([word for _, word in word_positions])
+    
+    def _parse_arxiv_xml(self, xml_text: str) -> List[Dict]:
+        import xml.etree.ElementTree as ET
+        results = []
+        try:
+            root = ET.fromstring(xml_text)
+            namespace = {'atom': 'http://www.w3.org/2005/Atom'}
+            
+            for entry in root.findall('atom:entry', namespace):
+                title = entry.find('atom:title', namespace)
+                summary = entry.find('atom:summary', namespace)
+                published = entry.find('atom:published', namespace)
+                authors = entry.findall('atom:author/atom:name', namespace)
+                link = entry.find('atom:id', namespace)
+                
+                arxiv_id = link.text.split('/abs/')[-1] if link is not None else ''
+                
+                results.append({
+                    'title': title.text.strip().replace('\n', ' ') if title is not None else '',
+                    'abstract': summary.text.strip().replace('\n', ' ') if summary is not None else '',
+                    'authors': [a.text for a in authors[:5]],
+                    'year': published.text[:4] if published is not None else '',
+                    'doi': f"arXiv:{arxiv_id}",
+                    'url': link.text if link is not None else '',
+                    'source': 'arXiv',
+                    'venue': 'arXiv preprint'
+                })
+        except Exception as e:
+            print(f"XML parsing error: {e}")
+        return results
+    
+    def retrieve_parallel(self, query: str, max_per_source: int = 20) -> List[Dict]:
+        all_results = []
+        
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(self.search_arxiv, query, max_per_source): 'arxiv',
+                executor.submit(self.search_openalex, query, max_per_source): 'openalex',
+                executor.submit(self.search_crossref, query, max_per_source): 'crossref'
+            }
+            
+            for future in as_completed(futures):
+                source = futures[future]
+                try:
+                    results = future.result()
+                    all_results.extend(results)
+                except Exception as e:
+                    print(f"{source} failed: {e}")
+        
+        return all_results
+
+
+class CitationManager:
+    def __init__(self):
+        self.citations = []
+        self.citation_map = {}
+        
+    def add_citation(self, paper: Dict) -> int:
+        citation_key = paper.get('doi', '') or paper.get('title', '')
+        
+        if citation_key in self.citation_map:
+            return self.citation_map[citation_key]
+        
+        citation_num = len(self.citations) + 1
+        self.citations.append(paper)
+        self.citation_map[citation_key] = citation_num
+        return citation_num
+    
+    def get_citation_text(self, citation_nums: List[int]) -> str:
+        return f"[{', '.join(map(str, citation_nums))}]"
+    
+    def format_citation_apa(self, paper: Dict, number: int) -> str:
+        authors = paper.get('authors', [])
+        if len(authors) == 0:
+            author_str = "Unknown Author"
+        elif len(authors) == 1:
+            author_str = authors[0]
+        elif len(authors) == 2:
+            author_str = f"{authors[0]} & {authors[1]}"
+        elif len(authors) <= 7:
+            author_str = ', '.join(authors[:-1]) + f", & {authors[-1]}"
+        else:
+            author_str = ', '.join(authors[:6]) + ", ... " + authors[-1]
+        
+        year = paper.get('year', 'n.d.')
+        title = paper.get('title', 'Untitled')
+        venue = paper.get('venue', 'Unknown venue')
+        doi = paper.get('doi', '')
+        url = paper.get('url', '')
+        
+        citation = f"[{number}] {author_str} ({year}). {title}. {venue}."
+        
+        if doi and not doi.startswith('http') and not doi.startswith('arXiv'):
+            citation += f" https://doi.org/{doi}"
+        elif doi and doi.startswith('arXiv'):
+            citation += f" {doi}"
+        elif url:
+            citation += f" {url}"
+        
+        return citation
+    
+    def generate_bibliography(self) -> str:
+        bib_lines = ["REFERENCES", "=" * 80, ""]
+        for i, paper in enumerate(self.citations, 1):
+            bib_lines.append(self.format_citation_apa(paper, i))
+            bib_lines.append("")
+        return "\n".join(bib_lines)
+
+
+class FactExtractor:
+    @staticmethod
+    def extract_facts(paper: Dict) -> Dict:
+        abstract = paper.get('abstract', '')
+        title = paper.get('title', '')
+        
+        facts = {
+            'method': FactExtractor._extract_methods(abstract, title),
+            'finding': FactExtractor._extract_findings(abstract),
+            'result': FactExtractor._extract_results(abstract),
+            'challenge': FactExtractor._extract_challenges(abstract),
+            'application': FactExtractor._extract_applications(abstract, title),
+            'contribution': FactExtractor._extract_contributions(abstract)
+        }
+        return facts
+    
+    @staticmethod
+    def _extract_methods(text: str, title: str) -> str:
+        method_keywords = [
+            'machine learning', 'deep learning', 'neural network', 'cnn', 'convolutional neural network',
+            'rnn', 'recurrent neural network', 'transformer', 'lstm', 'gru', 'attention mechanism',
+            'algorithm', 'framework', 'approach', 'method', 'technique', 'system', 'model',
+            'federated learning', 'reinforcement learning', 'supervised learning', 'unsupervised learning',
+            'transfer learning', 'meta-learning', 'optimization', 'classification', 'regression',
+            'clustering', 'ensemble method', 'random forest', 'support vector machine', 'svm',
+            'bayesian', 'probabilistic model', 'statistical method', 'simulation', 'experimental design'
+        ]
+        
+        text_lower = (text + ' ' + title).lower()
+        found = [kw for kw in method_keywords if kw in text_lower]
+        return found[0] if found else 'advanced computational approaches'
+    
+    @staticmethod
+    def _extract_findings(text: str) -> str:
+        finding_patterns = [
+            r'achieve[ds]? (\d+\.?\d*%)',
+            r'(\d+\.?\d*%) accuracy',
+            r'(\d+\.?\d*%) precision',
+            r'improve[ds]? (?:by )?(\d+\.?\d*%)',
+            r'demonstrate[ds]? ([\w\s]{10,50})',
+            r'show[ns]? ([\w\s]{10,50})',
+            r'found that ([\w\s]{10,50})',
+            r'reveal[s]? ([\w\s]{10,50})',
+            r'confirm[s]? ([\w\s]{10,50})'
+        ]
+        
+        for pattern in finding_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                finding = match.group(0)
+                if len(finding) > 10:
+                    return finding[:100]
+        return 'significant improvements in performance metrics'
+    
+    @staticmethod
+    def _extract_results(text: str) -> str:
+        result_keywords = ['accuracy', 'precision', 'recall', 'f1-score', 'f1 score', 'performance', 
+                          'efficiency', 'effectiveness', 'improvement', 'reduction', 'increase',
+                          'throughput', 'latency', 'speed', 'scalability', 'robustness']
+        
+        for keyword in result_keywords:
+            if keyword in text.lower():
+                context = text[max(0, text.lower().find(keyword)-60):text.lower().find(keyword)+120]
+                numbers = re.findall(r'\d+\.?\d*%|\d+\.?\d*', context)
+                if numbers:
+                    return f"{keyword} of {numbers[0]}{'%' if '%' not in numbers[0] else ''}"
+        return 'notable performance improvements'
+    
+    @staticmethod
+    def _extract_challenges(text: str) -> str:
+        challenge_keywords = ['challenge', 'limitation', 'difficulty', 'problem', 'issue', 
+                             'constraint', 'bottleneck', 'gap', 'barrier', 'obstacle']
+        
+        text_lower = text.lower()
+        for keyword in challenge_keywords:
+            if keyword in text_lower:
+                idx = text_lower.find(keyword)
+                context = text[max(0, idx-10):min(len(text), idx+80)]
+                return context.strip()
+        return 'limitations in existing methodologies'
+    
+    @staticmethod
+    def _extract_applications(text: str, title: str) -> str:
+        app_keywords = ['healthcare', 'medical', 'clinical', 'finance', 'financial', 'banking',
+                       'security', 'cybersecurity', 'network', 'networking', 'iot', 'internet of things',
+                       'cloud', 'cloud computing', '5g', '6g', 'wireless', 'autonomous', 'robotics',
+                       'detection', 'prediction', 'classification', 'recognition', 'diagnosis',
+                       'manufacturing', 'industrial', 'smart city', 'smart cities', 'transportation',
+                       'energy', 'agriculture', 'education', 'social media']
+        
+        combined = (text + ' ' + title).lower()
+        found = [kw for kw in app_keywords if kw in combined]
+        return found[0] if found else 'various application domains'
+    
+    @staticmethod
+    def _extract_contributions(text: str) -> str:
+        contrib_patterns = [
+            r'contribut(?:e|ion)[s]? ([\w\s]{15,60})',
+            r'novelty ([\w\s]{15,60})',
+            r'innovation ([\w\s]{15,60})',
+            r'advance[s]? ([\w\s]{15,60})'
+        ]
+        
+        for pattern in contrib_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                return match.group(0)[:80]
+        return 'novel contributions to the field'
+
+
+class TextPostProcessor:
+    @staticmethod
+    def clean_text(text: str) -> str:
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'([.!?])\s*([A-Z])', r'\1 \2', text)
+        text = TextPostProcessor._remove_duplicate_words(text)
+        text = TextPostProcessor._fix_incomplete_sentences(text)
+        text = TextPostProcessor._split_long_paragraphs(text)
+        return text.strip()
+    
+    @staticmethod
+    def _remove_duplicate_words(text: str) -> str:
+        text = re.sub(r'\b(\w+)\s+\1\b', r'\1', text, flags=re.IGNORECASE)
+        text = re.sub(r'shows? that shows?', 'shows', text, flags=re.IGNORECASE)
+        text = re.sub(r'demonstrates? that demonstrates?', 'demonstrates', text, flags=re.IGNORECASE)
+        text = re.sub(r'has shown shows', 'has shown', text, flags=re.IGNORECASE)
+        return text
+    
+    @staticmethod
+    def _fix_incomplete_sentences(text: str) -> str:
+        incomplete_endings = [
+            r'\s+are\s*\.', r'\s+is\s*\.', r'\s+for\s*\.', r'\s+to\s*\.', 
+            r'\s+the\s*\.', r'\s+and\s*\.', r'\s+in\s*\.', r'\s+of\s*\.',
+            r'\s+requi\s*\.', r'\s+solu\s*\.', r'\s+appro\s*\.'
+        ]
+        
+        for pattern in incomplete_endings:
+            text = re.sub(pattern, '.', text)
+        
+        sentences = re.split(r'([.!?]\s+)', text)
+        complete_sentences = []
+        for i in range(0, len(sentences)-1, 2):
+            sentence = sentences[i]
+            separator = sentences[i+1] if i+1 < len(sentences) else ''
+            if len(sentence.split()) >= 5:
+                complete_sentences.append(sentence + separator)
+        
+        return ''.join(complete_sentences)
+    
+    @staticmethod
+    def _split_long_paragraphs(text: str) -> str:
+        sentences = re.split(r'([.!?]\s+)', text)
+        result = []
+        sentence_count = 0
+        
+        for i in range(0, len(sentences)-1, 2):
+            sentence = sentences[i]
+            separator = sentences[i+1] if i+1 < len(sentences) else ''
+            result.append(sentence + separator)
+            sentence_count += 1
+            
+            if sentence_count >= 4 and i < len(sentences) - 2:
+                result.append('\n\n')
+                sentence_count = 0
+        
+        return ''.join(result)
+
+
+class ThematicGrouper:
+    @staticmethod
+    def group_papers_by_theme(papers: List[Dict], extractor: FactExtractor) -> Dict[str, List[Dict]]:
+        themes = defaultdict(list)
+        
+        for paper in papers:
+            facts = extractor.extract_facts(paper)
+            method = facts['method']
+            application = facts['application']
+            
+            if any(kw in method.lower() for kw in ['deep learning', 'neural network', 'cnn', 'rnn', 'transformer']):
+                themes['Deep Learning Approaches'].append(paper)
+            elif any(kw in method.lower() for kw in ['machine learning', 'classification', 'regression']):
+                themes['Machine Learning Methods'].append(paper)
+            elif any(kw in application.lower() for kw in ['security', 'cybersecurity', 'intrusion']):
+                themes['Security and Privacy'].append(paper)
+            elif any(kw in application.lower() for kw in ['network', '5g', '6g', 'wireless']):
+                themes['Network Technologies'].append(paper)
+            elif any(kw in application.lower() for kw in ['iot', 'edge', 'cloud']):
+                themes['Edge and Cloud Computing'].append(paper)
+            else:
+                themes['General Approaches'].append(paper)
+        
+        return dict(themes)
+
+
+class ParaphrasingEngine:
+    def __init__(self, citation_manager: CitationManager):
+        self.citation_manager = citation_manager
+        self.used_templates = defaultdict(list)
+        
+        self.intro_phrases = [
+            "Recent research has demonstrated that",
+            "Studies have shown that",
+            "Investigations reveal that",
+            "Empirical evidence suggests that",
+            "Prior work has established that",
+            "Contemporary studies indicate that"
+        ]
+        
+        self.templates = {
+            'finding': [
+                "{intro} {authors} ({year}) {finding} {cite}.",
+                "{authors} ({year}) demonstrated that {finding} {cite}.",
+                "Research by {authors} ({year}) revealed {finding} {cite}.",
+                "In their work, {authors} ({year}) found that {finding} {cite}.",
+                "The study by {authors} ({year}) confirmed {finding} {cite}.",
+                "Experimental results from {authors} ({year}) showed {finding} {cite}."
+            ],
+            'method': [
+                "{authors} ({year}) employed {method} to address {application} challenges {cite}.",
+                "The approach developed by {authors} ({year}) utilizes {method} for {application} {cite}.",
+                "Building on {method}, {authors} ({year}) investigated {application} {cite}.",
+                "{authors} ({year}) proposed a novel {method}-based framework for {application} {cite}.",
+                "Using {method}, {authors} ({year}) tackled {application} problems {cite}."
+            ],
+            'result': [
+                "{authors} ({year}) achieved {result} in their experimental evaluation {cite}.",
+                "Performance metrics demonstrated {result}, as reported by {authors} ({year}) {cite}.",
+                "Evaluation results from {authors} ({year}) indicated {result} {cite}.",
+                "The system developed by {authors} ({year}) attained {result} {cite}.",
+                "{authors} ({year}) reported {result} across multiple test scenarios {cite}."
+            ],
+            'challenge': [
+                "However, {authors} ({year}) identified {challenge} as a significant limitation {cite}.",
+                "Despite progress, {authors} ({year}) noted that {challenge} remain problematic {cite}.",
+                "Current approaches face {challenge}, as highlighted by {authors} ({year}) {cite}.",
+                "{authors} ({year}) pointed out that {challenge} require further investigation {cite}.",
+                "The work by {authors} ({year}) revealed {challenge} in existing solutions {cite}."
+            ],
+            'synthesis': [
+                "Multiple studies have examined {topic}, with particular emphasis on {aspect} {cite}.",
+                "Research in {topic} has consistently focused on {aspect} {cite}.",
+                "Several investigations have explored {aspect} in the context of {topic} {cite}.",
+                "The literature demonstrates significant progress in {aspect} for {topic} applications {cite}.",
+                "Collective evidence from multiple studies {cite} suggests that {aspect} is crucial for {topic}."
+            ]
+        }
+    
+    def _get_fresh_template(self, template_type: str, paper_id: str) -> str:
+        available = [t for t in self.templates[template_type] if t not in self.used_templates[paper_id]]
+        if not available:
+            self.used_templates[paper_id] = []
+            available = self.templates[template_type]
+        
+        template = random.choice(available)
+        self.used_templates[paper_id].append(template)
+        return template
+    
+    def paraphrase_finding(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('finding', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        intro = random.choice(self.intro_phrases) if '{intro}' in template else ''
+        authors_str = self._format_authors(paper['authors'])
+        
+        return template.format(
+            intro=intro,
+            authors=authors_str,
+            year=paper['year'],
+            finding=facts['finding'],
+            cite=f"[{citation_num}]"
+        )
+    
+    def paraphrase_method(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('method', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        authors_str = self._format_authors(paper['authors'])
+        return template.format(
+            authors=authors_str,
+            year=paper['year'],
+            method=facts['method'],
+            application=facts['application'],
+            cite=f"[{citation_num}]"
+        )
+    
+    def paraphrase_result(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('result', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        authors_str = self._format_authors(paper['authors'])
+        return template.format(
+            authors=authors_str,
+            year=paper['year'],
+            result=facts['result'],
+            cite=f"[{citation_num}]"
+        )
+    
+    def paraphrase_challenge(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('challenge', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        authors_str = self._format_authors(paper['authors'])
+        return template.format(
+            authors=authors_str,
+            year=paper['year'],
+            challenge=facts['challenge'],
+            cite=f"[{citation_num}]"
+        )
+    
+    def synthesize_multiple(self, papers: List[Dict], topic: str, aspect: str) -> str:
+        template = random.choice(self.templates['synthesis'])
+        citation_nums = [self.citation_manager.add_citation(p) for p in papers[:5]]
+        cite_text = f"[{', '.join(map(str, citation_nums))}]"
+        
+        return template.format(
+            topic=topic,
+            aspect=aspect,
+            cite=cite_text
+        )
+    
+    def _format_authors(self, authors: List[str]) -> str:
+        if not authors:
+            return "Researchers"
+        
+        last_names = []
+        for author in authors[:2]:
+            parts = author.split()
+            last_names.append(parts[-1] if parts else author)
+        
+        if len(authors) == 1:
+            return last_names[0]
+        elif len(authors) == 2:
+            return f"{last_names[0]} and {last_names[1]}"
+        else:
+            return f"{last_names[0]} et al."
+
+
+class TableGenerator:
+    @staticmethod
+    def generate_objectives_table(objectives: List[str]) -> str:
+        table = "\n"
+        table += "+" + "-" * 10 + "+" + "-" * 68 + "+\n"
+        table += "| " + "Obj. #".ljust(8) + " | " + "Description".ljust(66) + " |\n"
+        table += "+" + "-" * 10 + "+" + "-" * 68 + "+\n"
+        
+        for i, obj in enumerate(objectives, 1):
+            obj_short = obj[:64] + "..." if len(obj) > 64 else obj
+            table += f"| {str(i).ljust(8)} | {obj_short.ljust(66)} |\n"
+        
+        table += "+" + "-" * 10 + "+" + "-" * 68 + "+\n"
+        return table
+    
+    @staticmethod
+    def generate_timeline_table() -> str:
+        table = "\n"
+        table += "+" + "-" * 15 + "+" + "-" * 25 + "+" + "-" * 38 + "+\n"
+        table += "| " + "Phase".ljust(13) + " | " + "Timeline".ljust(23) + " | " + "Key Deliverables".ljust(36) + " |\n"
+        table += "+" + "-" * 15 + "+" + "-" * 25 + "+" + "-" * 38 + "+\n"
+        
+        phases = [
+            ("Phase 1", "Months 1-12", "Prototype, Dataset, Tech Report"),
+            ("Phase 2", "Months 13-24", "Experiments, Publications, System"),
+            ("Phase 3", "Months 25-36", "Validation, Deployment, Final Report")
+        ]
+        
+        for phase, timeline, deliverables in phases:
+            table += f"| {phase.ljust(13)} | {timeline.ljust(23)} | {deliverables.ljust(36)} |\n"
+        
+        table += "+" + "-" * 15 + "+" + "-" * 25 + "+" + "-" * 38 + "+\n"
+        return table
+    
+    @staticmethod
+    def generate_budget_table() -> str:
+        table = "\n"
+        table += "+" + "-" * 30 + "+" + "-" * 20 + "+" + "-" * 28 + "+\n"
+        table += "| " + "Category".ljust(28) + " | " + "Percentage".ljust(18) + " | " + "Justification".ljust(26) + " |\n"
+        table += "+" + "-" * 30 + "+" + "-" * 20 + "+" + "-" * 28 + "+\n"
+        
+        categories = [
+            ("Personnel", "60%", "PI + 2 Grad Students"),
+            ("Equipment & Computing", "20%", "HPC, Software, Hardware"),
+            ("Travel & Conferences", "10%", "Dissemination"),
+            ("Other Direct Costs", "10%", "Publications, Data")
+        ]
+        
+        for category, percentage, justification in categories:
+            table += f"| {category.ljust(28)} | {percentage.ljust(18)} | {justification.ljust(26)} |\n"
+        
+        table += "+" + "-" * 30 + "+" + "-" * 20 + "+" + "-" * 28 + "+\n"
+        return table
+    
+    @staticmethod
+    def generate_risk_table() -> str:
+        table = "\n"
+        table += "+" + "-" * 25 + "+" + "-" * 12 + "+" + "-" * 41 + "+\n"
+        table += "| " + "Risk".ljust(23) + " | " + "Level".ljust(10) + " | " + "Mitigation Strategy".ljust(39) + " |\n"
+        table += "+" + "-" * 25 + "+" + "-" * 12 + "+" + "-" * 41 + "+\n"
+        
+        risks = [
+            ("Technical challenges", "Medium", "Iterative development, alternatives"),
+            ("Resource constraints", "Low", "Cloud computing, HPC access"),
+            ("Timeline delays", "Medium", "Buffer periods, agile approach"),
+            ("Personnel turnover", "Low", "Cross-training, documentation")
+        ]
+        
+        for risk, level, mitigation in risks:
+            table += f"| {risk.ljust(23)} | {level.ljust(10)} | {mitigation.ljust(39)} |\n"
+        
+        table += "+" + "-" * 25 + "+" + "-" * 12 + "+" + "-" * 41 + "+\n"
+        return table
+
+
+class RAGSystem:
+    def __init__(self):
+        self.retriever = OpenAccessRetriever()
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.citation_manager = CitationManager()
+        self.fact_extractor = FactExtractor()
+        self.paraphraser = ParaphrasingEngine(self.citation_manager)
+        self.text_processor = TextPostProcessor()
+        self.grouper = ThematicGrouper()
+        
+    def retrieve_and_rank(self, query: str, top_k: int = 25) -> List[Dict]:
+        documents = self.retriever.retrieve_parallel(query, max_per_source=20)
+        
+        if not documents:
+            return []
+        
+        documents = [doc for doc in documents if doc.get('title') and doc.get('abstract') and len(doc.get('abstract', '')) > 100]
+        
+        if not documents:
+            return []
+        
+        query_embedding = self.embedding_model.encode([query])[0]
+        
+        doc_texts = [f"{doc['title']} {doc['abstract']}" for doc in documents]
+        doc_embeddings = self.embedding_model.encode(doc_texts)
+        similarities = np.dot(doc_embeddings, query_embedding)
+        top_indices = np.argsort(similarities)[::-1][:top_k]
+        
+        return [documents[i] for i in top_indices]
+
+
+class ProposalGenerator:
+    def __init__(self):
+        self.rag = RAGSystem()
+        self.table_gen = TableGenerator()
+        
+    def generate_full_proposal(self, title: str, keywords: str, description: str) -> Generator:
+        yield self._stream_event("status", "Retrieving relevant literature from multiple academic databases...")
+        
+        search_query = f"{title} {keywords} {description}"
+        papers = self.rag.retrieve_and_rank(search_query, top_k=25)
+        
+        if len(papers) < 5:
+            yield self._stream_event("error", "Insufficient relevant literature found. Please refine your query with more specific keywords or try a different topic.")
+            return
+        
+        yield self._stream_event("status", f"Successfully retrieved {len(papers)} relevant papers. Analyzing and categorizing literature...")
+        time.sleep(1)
+        
+        yield self._stream_event("content", f"GRANT PROPOSAL\n{'='*80}\n\n")
+        yield self._stream_event("content", f"Title: {title}\n")
+        yield self._stream_event("content", f"Keywords: {keywords}\n")
+        yield self._stream_event("content", f"Duration: 36 months\n\n")
+        
+        sections = [
+            ("Executive Summary", self._generate_executive_summary, 1200),
+            ("1. Introduction and Background", self._generate_introduction, 2500),
+            ("2. Literature Review", self._generate_literature_review, 4500),
+            ("3. Theoretical Framework", self._generate_theoretical_framework, 2000),
+            ("4. Research Questions and Hypotheses", self._generate_research_questions, 1500),
+            ("5. Research Objectives", self._generate_objectives, 1800),
+            ("6. Methodology and Approach", self._generate_methodology, 3500),
+            ("7. Work Plan and Timeline", self._generate_work_plan, 2000),
+            ("8. Expected Outcomes and Impact", self._generate_outcomes, 2500),
+            ("9. Risk Assessment and Mitigation", self._generate_risk_assessment, 1500),
+            ("10. Budget Justification", self._generate_budget, 1800),
+            ("11. Broader Impacts", self._generate_broader_impacts, 1500),
+            ("12. Data Management Plan", self._generate_data_management, 1200)
+        ]
+        
+        for i, (section_title, generator_func, target_words) in enumerate(sections, 1):
+            yield self._stream_event("status", f"Generating section {i}/{len(sections)}: {section_title} (target: {target_words} words)")
+            
+            section_content = generator_func(title, keywords, description, papers)
+            section_content = self.rag.text_processor.clean_text(section_content)
+            
+            yield self._stream_event("content", f"\n{section_title}\n{'='*80}\n\n")
+            
+            words = section_content.split()
+            for j, word in enumerate(words):
+                yield self._stream_event("content", word + " ")
+                if j % 50 == 0:
+                    time.sleep(0.01)
+            
+            yield self._stream_event("content", "\n")
+        
+        yield self._stream_event("status", "Generating comprehensive bibliography with APA citations...")
+        bibliography = self.rag.citation_manager.generate_bibliography()
+        yield self._stream_event("content", f"\n{bibliography}\n")
+        
+        total_citations = len(self.rag.citation_manager.citations)
+        yield self._stream_event("complete", f"Proposal generation complete! Generated {len(sections)} sections with {total_citations} peer-reviewed references from arXiv, OpenAlex, and Crossref databases.")
+    
+    def _stream_event(self, event_type: str, content: str) -> str:
+        return json.dumps({"type": event_type, "content": content}) + "\n"
+    
+    def _add_transition(self, from_section: str, to_section: str) -> str:
+        transitions = [
+            f"Having established {from_section}, we now turn our attention to {to_section}.",
+            f"Building upon {from_section}, the following section examines {to_section}.",
+            f"With {from_section} outlined above, we proceed to detail {to_section}.",
+            f"The preceding discussion of {from_section} provides foundation for understanding {to_section}."
+        ]
+        return random.choice(transitions) + " "
+    
+    def _generate_executive_summary(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        top_papers = papers[:5]
+        paraphraser = self.rag.paraphraser
+        
+        sentences = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        sentences.append(f"This proposal addresses critical challenges in {main_keyword} that have emerged as high priorities in contemporary research and development.")
+        
+        sentences.append(f"The field has witnessed significant advances in recent years, yet substantial gaps remain in our understanding and implementation of effective solutions.")
+        
+        if top_papers:
+            paper = top_papers[0]
+            facts = self.rag.fact_extractor.extract_facts(paper)
+            sentences.append(paraphraser.paraphrase_finding(paper, facts))
+        
+        sentences.append(f"However, current approaches face limitations in scalability, real-world applicability, and comprehensive evaluation frameworks.")
+        
+        sentences.append(f"This proposal presents a comprehensive three-year research program focused on {description[:200]}.")
+        
+        sentences.append(f"Our research objectives include: (1) developing novel theoretical frameworks that address identified gaps, (2) implementing and validating innovative methodologies through rigorous experimentation, (3) achieving measurable performance improvements over state-of-the-art approaches, and (4) demonstrating real-world applicability through deployment validation.")
+        
+        if len(top_papers) > 2:
+            sentences.append(paraphraser.synthesize_multiple(top_papers[:4], main_keyword, "advanced computational methodologies"))
+        
+        sentences.append(f"The intellectual merit of this work lies in its novel integration of multiple theoretical perspectives, rigorous empirical validation, and potential to advance fundamental understanding in {main_keyword}.")
+        
+        sentences.append(f"Expected outcomes include peer-reviewed publications in top-tier venues, open-source software releases, curated datasets for community use, and trained graduate students equipped to advance the field.")
+        
+        sentences.append(f"Broader impacts encompass contributions to national priorities in {main_keyword}, enhancement of research infrastructure through shared resources, and potential societal benefits through improved technologies addressing real-world challenges.")
+        
+        sentences.append(f"This project directly addresses funding agency priorities by tackling critical challenges with immediate practical applications while advancing fundamental scientific knowledge.")
+        
+        return " ".join(sentences)
+    
+    def _generate_introduction(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        paraphraser = self.rag.paraphraser
+        sentences = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        secondary_keywords = [k.strip() for k in keywords.split(',')[1:3]]
+        
+        sentences.append(f"The rapid evolution of {main_keyword} has transformed numerous aspects of modern technology, science, and society.")
+        sentences.append(f"Over the past decade, researchers and practitioners have made remarkable progress in understanding fundamental principles, developing practical applications, and establishing theoretical foundations.")
+        
+        sentences.append(paraphraser.synthesize_multiple(papers[:3], main_keyword, "foundational research"))
+        
+        sentences.append(f"The intersection of {main_keyword} with emerging technologies such as {', '.join(secondary_keywords) if secondary_keywords else 'artificial intelligence and distributed systems'} presents both opportunities and challenges.")
+        
+        for i, paper in enumerate(papers[:6]):
+            facts = self.rag.fact_extractor.extract_facts(paper)
+            if i % 3 == 0:
+                sentences.append(paraphraser.paraphrase_method(paper, facts))
+            elif i % 3 == 1:
+                sentences.append(paraphraser.paraphrase_result(paper, facts))
+            else:
+                sentences.append(paraphraser.paraphrase_finding(paper, facts))
+        
+        sentences.append(f"Despite these advances, the field faces several critical challenges that limit progress and real-world deployment.")
+        
+        for paper in papers[6:9]:
+            facts = self.rag.fact_extractor.extract_facts(paper)
+            sentences.append(paraphraser.paraphrase_challenge(paper, facts))
+        
+        sentences.append(f"This proposal directly addresses these challenges through {title}, which represents a crucial gap in current knowledge and practice.")
+        
+        sentences.append(f"Our research is motivated by three key observations from the literature and practice.")
+        sentences.append(f"First, existing approaches have not adequately addressed the integration and scalability challenges inherent in {main_keyword}.")
+        sentences.append(f"Second, comprehensive evaluation frameworks that consider multiple dimensions of performance, usability, and real-world applicability remain underdeveloped.")
+        sentences.append(f"Third, the translation of research advances into practical, deployable solutions continues to face significant barriers.")
+        
+        sentences.append(f"Our proposed research addresses these gaps through a comprehensive approach that {description[:200]}.")
+        
+        sentences.append(f"The significance of this work extends beyond immediate technical contributions.")
+        sentences.append(f"Successful completion will advance fundamental understanding in {main_keyword}, provide validated methodologies for the research community, and demonstrate practical pathways for real-world deployment.")
+        
+        sentences.append(paraphraser.synthesize_multiple(papers[:5], main_keyword, "innovative methodologies"))
+        
+        sentences.append(f"By integrating insights from multiple disciplines, leveraging state-of-the-art technologies, and maintaining rigorous evaluation standards, this project aims to make transformative contributions to {main_keyword} research and practice.")
+        
+        return " ".join(sentences)
+    
+    def _generate_literature_review(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        paraphraser = self.rag.paraphraser
+        sentences = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        
+        sentences.append(f"This section provides a comprehensive review of relevant literature in {main_keyword}, organized thematically to highlight key advances, methodologies, challenges, and research gaps.")
+        sentences.append(f"We reviewed over {len(papers)} peer-reviewed publications from leading conferences, journals, and preprint repositories, focusing on work published within the past five years to ensure contemporary relevance.")
+        
+        grouped_papers = self.rag.grouper.group_papers_by_theme(papers, self.rag.fact_extractor)
+        
+        for theme, theme_papers in grouped_papers.items():
+            if not theme_papers:
+                continue
+            
+            sentences.append(f"\n\n{theme}\n")
+            sentences.append(f"Significant research has focused on {theme.lower()}, with multiple investigations exploring various aspects of this domain.")
+            
+            for i, paper in enumerate(theme_papers[:5]):
+                facts = self.rag.fact_extractor.extract_facts(paper)
+                if i % 2 == 0:
+                    sentences.append(paraphraser.paraphrase_finding(paper, facts))
+                else:
+                    sentences.append(paraphraser.paraphrase_method(paper, facts))
+            
+            if len(theme_papers) > 5:
+                sentences.append(paraphraser.synthesize_multiple(theme_papers[:5], theme.lower(), "diverse methodological approaches"))
+        
+        sentences.append("\n\nPerformance Evaluation and Benchmarking\n")
+        sentences.append(f"Researchers have employed diverse evaluation methodologies to assess performance across multiple dimensions including accuracy, efficiency, scalability, and robustness.")
+        
+        for paper in papers[15:20]:
+            facts = self.rag.fact_extractor.extract_facts(paper)
+            sentences.append(paraphraser.paraphrase_result(paper, facts))
+        
+        sentences.append("\n\nChallenges and Limitations\n")
+        sentences.append(f"Despite substantial progress, the literature reveals several persistent challenges and limitations that constrain further advancement.")
+        
+        for paper in papers[20:]:
+            facts = self.rag.fact_extractor.extract_facts(paper)
+            sentences.append(paraphraser.paraphrase_challenge(paper, facts))
+        
+        sentences.append("\n\nIdentified Research Gaps\n")
+        sentences.append(f"Our comprehensive literature review reveals several critical gaps that this proposal directly addresses.")
+        
+        sentences.append(f"First, while individual techniques have demonstrated promise, their integration into cohesive, scalable systems remains under-explored.")
+        sentences.append(f"Existing work tends to focus on isolated components rather than holistic system design and deployment.")
+        
+        sentences.append(f"Second, comprehensive evaluation frameworks that simultaneously consider multiple performance dimensions, usability aspects, and real-world applicability constraints are lacking.")
+        sentences.append(f"Most studies evaluate performance using limited metrics under controlled conditions, potentially missing critical real-world considerations.")
+        
+        sentences.append(f"Third, the transition from research prototypes to production-ready, deployable solutions faces significant barriers that have not been adequately addressed in existing literature.")
+        
+        sentences.append(f"Fourth, many approaches lack rigorous theoretical foundations, relying instead on empirical observations without deeper understanding of underlying mechanisms and principles.")
+        
+        sentences.append(f"Our proposed research directly addresses these gaps through {description[:150]}.")
+        sentences.append(f"By developing comprehensive frameworks, conducting rigorous multi-dimensional evaluations, and validating through real-world deployment, we aim to advance both theoretical understanding and practical implementation in {main_keyword}.")
+        
+        return " ".join(sentences)
+    
+    def _generate_theoretical_framework(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        paraphraser = self.rag.paraphraser
+        framework = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        
+        framework.append(f"This research is grounded in established theoretical frameworks while introducing novel conceptual contributions that advance understanding in {main_keyword}.")
+        
+        framework.append(self._add_transition("the literature review", "our theoretical framework"))
+        
+        framework.append("\n\nFoundational Theories\n")
+        framework.append(f"Our work builds upon several foundational theories that have shaped contemporary research in {main_keyword}.")
+        
+        if len(papers) > 0:
+            framework.append(paraphraser.synthesize_multiple(papers[:4], main_keyword, "theoretical foundations and principles"))
+        
+        framework.append(f"These theoretical perspectives provide complementary lenses through which to understand the complexities of {main_keyword}.")
+        framework.append(f"However, existing theories have limitations in addressing emerging challenges related to scale, complexity, and real-world deployment constraints.")
+        
+        framework.append("\n\nProposed Conceptual Model\n")
+        framework.append(f"We propose an integrative conceptual model that synthesizes insights from multiple theoretical traditions while addressing identified limitations.")
+        
+        framework.append(f"The model consists of four interconnected components: (1) Input Processing Layer - responsible for data acquisition, preprocessing, and feature extraction; (2) Core Analytical Engine - implementing primary computational or analytical mechanisms; (3) Integration and Synthesis Module - combining results from multiple sources or methods; and (4) Output Generation and Validation - producing results and ensuring quality through comprehensive checks.")
+        
+        framework.append(f"Each component is informed by empirical findings from recent literature and designed to address specific limitations identified in existing approaches.")
+        
+        framework.append(f"The model emphasizes modularity, enabling independent development and validation of components while ensuring coherent integration.")
+        framework.append(f"This design facilitates iterative refinement, allows for component substitution as methods evolve, and supports comprehensive evaluation at multiple levels.")
+        
+        framework.append("\n\nTheoretical Contributions\n")
+        framework.append(f"This research makes several novel theoretical contributions to {main_keyword}.")
+        
+        framework.append(f"First, we extend existing frameworks by incorporating {description[:150]}, providing a more comprehensive and nuanced understanding of underlying mechanisms.")
+        
+        framework.append(f"Second, we propose novel theoretical constructs that bridge previously disparate approaches, enabling more integrated understanding across subdisciplines.")
+        
+        framework.append(f"Third, we establish formal connections between theoretical predictions and empirical observations, strengthening the scientific foundations of {main_keyword}.")
+        
+        framework.append(f"Fourth, we develop testable hypotheses that can guide future research and provide clear criteria for evaluating theoretical validity.")
+        
+        framework.append("\n\nOperationalization and Measurement\n")
+        framework.append(f"The theoretical framework is operationalized through specific methodological choices and measurement strategies detailed in subsequent sections.")
+        
+        framework.append(f"Each theoretical construct is mapped to measurable variables with clearly defined operational indicators.")
+        framework.append(f"We employ multiple measurement methods to ensure construct validity, including objective performance metrics, comparative benchmarks, and qualitative assessments where appropriate.")
+        
+        framework.append(f"This rigorous operationalization ensures that theoretical predictions can be empirically tested and refined based on empirical evidence.")
+        
+        return " ".join(framework)
+    
+    def _generate_research_questions(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        main_keyword = keywords.split(',')[0].strip()
+        
+        questions = []
+        questions.append(f"This research is guided by fundamental questions derived from gaps identified in the literature review and motivated by practical challenges observed in real-world applications.")
+        
+        questions.append(self._add_transition("the theoretical framework", "specific research questions"))
+        
+        questions.append(f"\n\nPrimary Research Questions\n")
+        
+        questions.append(f"RQ1: What are the key mechanisms and underlying principles that govern {title}?")
+        questions.append(f"This question addresses foundational understanding necessary for advancing both theory and practice in {main_keyword}.")
+        questions.append(f"We seek to identify critical factors, understand their interactions, and develop predictive models that can guide system design and optimization.")
+        
+        questions.append(f"\n\nRQ2: How can we develop more effective, efficient, and scalable approaches for {description[:120]}?")
+        questions.append(f"This question focuses on methodological innovation, building upon existing work while addressing identified limitations.")
+        questions.append(f"We aim to develop novel algorithms, architectures, or frameworks that demonstrably improve upon current state-of-the-art methods.")
+        
+        questions.append(f"\n\nRQ3: What performance improvements can be achieved through the proposed approaches across multiple evaluation dimensions?")
+        questions.append(f"This question addresses quantitative evaluation and comparison with existing methods using comprehensive metrics.")
+        questions.append(f"We seek to establish rigorous benchmarks and demonstrate measurable improvements in accuracy, efficiency, scalability, and robustness.")
+        
+        questions.append(f"\n\nRQ4: How can proposed solutions be effectively deployed, validated, and maintained in real-world operational environments?")
+        questions.append(f"This question considers practical implementation challenges including integration, resource constraints, and long-term sustainability.")
+        questions.append(f"We aim to develop deployment strategies, operational guidelines, and best practices that facilitate technology transfer from research to practice.")
+        
+        questions.append(f"\n\nRQ5: What are the broader implications and potential applications of this research beyond the immediate problem domain?")
+        questions.append(f"This question explores generalizability and potential for impact across multiple application contexts.")
+        questions.append(f"We seek to identify transferable insights, reusable components, and principles applicable to related challenges.")
+        
+        questions.append(f"\n\nResearch Hypotheses\n")
+        questions.append(f"Based on theoretical analysis, preliminary evidence, and insights from the literature, we propose the following testable hypotheses:")
+        
+        questions.append(f"\n\nH1: Performance Improvement Hypothesis")
+        questions.append(f"The proposed approach will demonstrate statistically significant improvements over baseline methods across multiple performance metrics, including at least 15% improvement in primary performance indicators and maintained or improved performance in secondary metrics.")
+        
+        questions.append(f"\n\nH2: Scalability Hypothesis")
+        questions.append(f"The proposed framework will exhibit near-linear scaling properties, maintaining performance characteristics as problem size increases by at least one order of magnitude.")
+        
+        questions.append(f"\n\nH3: Robustness Hypothesis")
+        questions.append(f"The system will demonstrate robust performance across diverse conditions, maintaining at least 85% of optimal performance under realistic noise, variability, and constraint conditions.")
+        
+        questions.append(f"\n\nH4: Generalization Hypothesis")
+        questions.append(f"Core principles and key components will generalize to related problem domains, with successful transfer demonstrated in at least two distinct application contexts.")
+        
+        questions.append(f"These hypotheses will be rigorously tested through systematic experimentation, statistical analysis, and comprehensive evaluation protocols described in the methodology section.")
+        
+        return " ".join(questions)
+    
+    def _generate_objectives(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        main_keyword = keywords.split(',')[0].strip()
+        
+        objectives = []
+        objectives.append(f"This research pursues specific, measurable objectives aligned with our research questions and designed to advance both scientific understanding and practical capabilities in {main_keyword}.")
+        
+        objectives.append(self._add_transition("research questions and hypotheses", "concrete objectives"))
+        
+        obj_list = [
+            "Develop comprehensive theoretical framework integrating multiple perspectives",
+            "Design and implement novel methodologies addressing identified limitations",
+            "Conduct rigorous experimental evaluation using established benchmarks",
+            "Achieve quantitative performance improvements over state-of-the-art",
+            "Validate approaches in real-world operational environments",
+            "Disseminate findings and contribute to research infrastructure"
+        ]
+        
+        objectives.append("\n\nTable 1: Research Objectives Overview")
+        objectives.append(self.table_gen.generate_objectives_table(obj_list))
+        
+        objectives.append("\n\nObjective 1: Theoretical Framework Development")
+        objectives.append(f"Establish comprehensive theoretical foundations for {main_keyword} by synthesizing insights from multiple disciplines, formalizing key concepts, and developing predictive models.")
+        objectives.append(f"Deliverables include formal theoretical specifications, conceptual models, and testable propositions documented in technical reports and peer-reviewed publications.")
+        
+        objectives.append("\n\nObjective 2: Methodological Innovation")
+        objectives.append(f"Create innovative approaches for {description[:150]} that address limitations in current methods including scalability constraints, computational efficiency, and real-world applicability.")
+        objectives.append(f"Deliverables include novel algorithms, system architectures, and implementation frameworks released as open-source software with comprehensive documentation.")
+        
+        objectives.append("\n\nObjective 3: Rigorous Experimental Evaluation")
+        objectives.append(f"Conduct systematic evaluation using established benchmarks, diverse test scenarios, and comprehensive metrics covering accuracy, efficiency, scalability, and robustness dimensions.")
+        objectives.append(f"Deliverables include curated datasets, evaluation protocols, and detailed experimental results published in peer-reviewed venues.")
+        
+        objectives.append("\n\nObjective 4: Performance Optimization")
+        objectives.append(f"Achieve measurable improvements including at least 15-20% gains in primary performance metrics, maintained efficiency under scale, and demonstrated robustness across diverse conditions.")
+        objectives.append(f"Deliverables include performance benchmarks, comparative analyses, and optimization guidelines for practitioners.")
+        
+        objectives.append("\n\nObjective 5: Real-World Validation")
+        objectives.append(f"Deploy and validate solutions in operational environments through collaborations with industry partners, demonstrating practical applicability and identifying deployment best practices.")
+        objectives.append(f"Deliverables include deployment case studies, operational guidelines, and validated system configurations.")
+        
+        objectives.append("\n\nObjective 6: Research Infrastructure and Capacity Building")
+        objectives.append(f"Contribute to community research infrastructure through open-source releases, shared datasets, and trained researchers capable of advancing {main_keyword}.")
+        objectives.append(f"Deliverables include software repositories, documentation, educational materials, and mentored graduate students.")
+        
+        objectives.append(f"\n\nEach objective includes specific milestones, success criteria, and deliverables outlined in the work plan section.")
+        objectives.append(f"Progress toward objectives will be monitored through quarterly reviews and adjusted as needed based on empirical findings.")
+        
+        return " ".join(objectives)
+    
+    def _generate_methodology(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        paraphraser = self.rag.paraphraser
+        methodology = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        
+        methodology.append(f"This section describes the comprehensive methodology for achieving research objectives, including research design, technical approaches, data collection strategies, implementation plans, and evaluation protocols.")
+        
+        methodology.append(self._add_transition("research objectives", "detailed methodology"))
+        
+        methodology.append("\n\n6.1 Research Design and Overall Approach\n")
+        methodology.append(f"We employ a multi-phase research design combining theoretical development, iterative prototyping, rigorous experimentation, and real-world validation.")
+        methodology.append(f"The design integrates quantitative and qualitative methods, ensuring comprehensive evaluation across multiple dimensions.")
+        
+        methodology.append(f"The research proceeds through three major phases: (1) Foundation and Development (Months 1-12) focusing on theoretical framework completion, initial prototype development, and data collection; (2) Experimentation and Refinement (Months 13-24) emphasizing systematic evaluation, iterative improvement, and performance optimization; and (3) Validation and Dissemination (Months 25-36) concentrating on real-world deployment, comprehensive validation, and results dissemination.")
+        
+        methodology.append("\n\n6.2 Technical Approach and Implementation\n")
+        methodology.append(f"Our technical approach builds upon proven methodologies from recent literature while introducing novel innovations to address identified limitations.")
+        
+        for paper in papers[:4]:
+            facts = self.rag.fact_extractor.extract_facts(paper)
+            methodology.append(paraphraser.paraphrase_method(paper, facts))
+        
+        methodology.append(f"We adapt and substantially extend these approaches to address the specific requirements of {title}.")
+        
+        methodology.append(f"Key innovations in our approach include: (1) integration of multiple complementary techniques to leverage their respective strengths, (2) novel optimization strategies that improve computational efficiency while maintaining accuracy, (3) adaptive mechanisms that adjust to varying conditions and requirements, and (4) modular architecture facilitating component-wise development, testing, and replacement.")
+        
+        methodology.append("\n\n6.3 Data Collection, Curation, and Management\n")
+        methodology.append(f"Data collection will proceed through multiple channels ensuring comprehensive coverage, diversity, and quality.")
+        
+        methodology.append(f"Primary data sources include established benchmark datasets widely used in {main_keyword} research, providing basis for direct comparison with existing work.")
+        methodology.append(f"We will supplement these with newly collected data from collaborating institutions, ensuring representation of real-world conditions and use cases.")
+        
+        methodology.append(f"Data collection targets include approximately 100,000-500,000 samples across diverse scenarios, conditions, and edge cases.")
+        methodology.append(f"All data will undergo rigorous quality assurance including validation checks, outlier detection, and bias assessment.")
+        
+        methodology.append(f"Data preprocessing will follow established best practices including normalization, handling missing values, feature engineering where appropriate, and train/validation/test splits following standard protocols.")
+        
+        methodology.append(f"We will adhere to data management best practices detailed in our Data Management Plan, ensuring reproducibility, proper documentation, and appropriate sharing with the research community.")
+        
+        methodology.append("\n\n6.4 System Implementation and Development\n")
+        methodology.append(f"Implementation will utilize industry-standard tools, frameworks, and development practices to ensure reproducibility, maintainability, and community adoption.")
+        
+        methodology.append(f"The system will be developed using modular architecture with clearly defined interfaces, enabling independent development and testing of components.")
+        methodology.append(f"All code will be version-controlled using Git, documented following established standards, and released as open-source software under permissive licenses.")
+        
+        methodology.append(f"Development will follow agile methodologies with two-week sprints, regular code reviews, continuous integration/testing, and iterative refinement based on empirical findings.")
+        
+        methodology.append(f"We will employ test-driven development practices, maintaining comprehensive unit tests, integration tests, and end-to-end system tests to ensure reliability and facilitate future modifications.")
+        
+        methodology.append("\n\n6.5 Experimental Protocol and Evaluation Design\n")
+        methodology.append(f"Experiments will be conducted following rigorous protocols ensuring validity, reliability, and reproducibility.")
+        
+        methodology.append(f"Our evaluation strategy encompasses multiple complementary approaches: (1) Benchmark Evaluation - systematic comparison with state-of-the-art methods using established datasets and metrics, (2) Ablation Studies - isolating contributions of individual components to understand their respective impacts, (3) Sensitivity Analysis - assessing robustness to parameter variations and input perturbations, (4) Scalability Testing - evaluating performance characteristics as problem size increases, and (5) Real-World Validation - testing in operational environments with realistic constraints.")
+        
+        methodology.append(f"All experiments will employ appropriate statistical methods including cross-validation, multiple independent runs, significance testing, and confidence interval estimation.")
+        
+        methodology.append(f"We will use at least five baseline methods for comparison, including recent state-of-the-art approaches from the literature.")
+        
+        methodology.append("\n\n6.6 Evaluation Metrics and Success Criteria\n")
+        methodology.append(f"Performance will be assessed using comprehensive metrics across multiple dimensions:")
+        
+        methodology.append(f"Primary Performance Metrics include accuracy, precision, recall, F1-score, or domain-appropriate equivalents, providing quantitative measures of core functionality.")
+        
+        methodology.append(f"Efficiency Metrics encompass computational time, memory usage, energy consumption, and throughput, assessing resource requirements and operational feasibility.")
+        
+        methodology.append(f"Scalability Metrics evaluate performance degradation as problem size increases, measured through complexity analysis and empirical scaling experiments.")
+        
+        methodology.append(f"Robustness Metrics assess performance stability under noisy inputs, parameter variations, and adverse conditions.")
+        
+        methodology.append(f"Usability Metrics, collected through user studies where appropriate, evaluate practical applicability including ease of deployment, interpretability of results, and integration with existing systems.")
+        
+        methodology.append(f"Success criteria include achieving at least 15% improvement over best baseline methods in primary metrics, demonstrating scalability to at least 10x problem size, maintaining 85% or better performance under realistic noise conditions, and positive validation in real-world deployment scenarios.")
+        
+        methodology.append("\n\n6.7 Validation Strategy and Quality Assurance\n")
+        methodology.append(f"Validation occurs at multiple levels ensuring comprehensive quality assurance.")
+        
+        methodology.append(f"Component-level validation tests individual modules against specifications using unit tests and focused experiments.")
+        
+        methodology.append(f"System-level validation assesses integrated functionality through end-to-end testing, integration tests, and comprehensive evaluation scenarios.")
+        
+        methodology.append(f"External validation through collaboration with industry partners provides real-world testing under operational constraints, user feedback, and deployment feasibility assessment.")
+        
+        methodology.append(f"Peer validation through conference presentations, journal submissions, and open-source releases enables community scrutiny, independent reproduction, and external validation of findings.")
+        
+        return " ".join(methodology)
+    
+    def _generate_work_plan(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        workplan = []
+        
+        workplan.append(f"The research will be conducted over a 36-month period organized into distinct phases with clear milestones, deliverables, and decision points.")
+        
+        workplan.append(self._add_transition("the methodology", "the detailed work plan and timeline"))
+        
+        workplan.append("\n\nTable 2: Project Timeline Overview")
+        workplan.append(self.table_gen.generate_timeline_table())
+        
+        workplan.append("\n\n7.1 Phase 1: Foundation and Development (Months 1-12)\n")
+        
+        workplan.append(f"This foundational phase establishes theoretical frameworks, develops initial prototypes, and prepares research infrastructure.")
+        
+        workplan.append(f"\n\nMilestone 1.1 (Month 3): Literature Review Completion and Theoretical Framework")
+        workplan.append(f"Complete comprehensive literature review, finalize theoretical framework, and submit first technical report.")
+        workplan.append(f"Deliverables: Technical report documenting theoretical framework, comprehensive bibliography, preliminary research design.")
+        
+        workplan.append(f"\n\nMilestone 1.2 (Month 6): Initial Prototype Development")
+        workplan.append(f"Develop functional prototype implementing core algorithms and system architecture.")
+        workplan.append(f"Deliverables: Working prototype with basic functionality, technical documentation, unit test suite.")
+        
+        workplan.append(f"\n\nMilestone 1.3 (Month 9): Data Collection and Preprocessing Pipeline")
+        workplan.append(f"Complete data collection from all sources, implement preprocessing pipelines, and validate data quality.")
+        workplan.append(f"Deliverables: Curated datasets, preprocessing scripts, data quality report, metadata documentation.")
+        
+        workplan.append(f"\n\nMilestone 1.4 (Month 12): Preliminary Experiments and Phase 1 Report")
+        workplan.append(f"Conduct initial experiments, analyze results, refine approach based on findings.")
+        workplan.append(f"Deliverables: Preliminary experimental results, Phase 1 completion report, refined research plan for Phase 2.")
+        workplan.append(f"Decision Point: Go/No-Go decision based on preliminary results. If promising, proceed to Phase 2; if not, pivot to alternative approaches.")
+        
+        workplan.append("\n\n7.2 Phase 2: Experimentation and Refinement (Months 13-24)\n")
+        
+        workplan.append(f"This phase focuses on comprehensive experimentation, iterative refinement, and performance optimization.")
+        
+        workplan.append(f"\n\nMilestone 2.1 (Month 15): Comprehensive Experimental Evaluation")
+        workplan.append(f"Complete systematic evaluation across all benchmark datasets, multiple metrics, and comparison with baseline methods.")
+        workplan.append(f"Deliverables: Comprehensive experimental results, statistical analyses, performance benchmarks, conference paper submission.")
+        
+        workplan.append(f"\n\nMilestone 2.2 (Month 18): System Refinement and Optimization")
+        workplan.append(f"Refine system based on experimental findings, optimize performance bottlenecks, enhance scalability.")
+        workplan.append(f"Deliverables: Optimized system implementation, performance improvements documentation, updated technical specifications.")
+        
+        workplan.append(f"\n\nMilestone 2.3 (Month 21): Comparative Analysis and Ablation Studies")
+        workplan.append(f"Conduct detailed comparative analysis with state-of-the-art methods, perform ablation studies to isolate component contributions.")
+        workplan.append(f"Deliverables: Comparative analysis report, ablation study results, component contribution analysis.")
+        
+        workplan.append(f"\n\nMilestone 2.4 (Month 24): Scalability Testing and Phase 2 Report")
+        workplan.append(f"Complete comprehensive scalability experiments, validate performance under increased load.")
+        workplan.append(f"Deliverables: Scalability analysis, Phase 2 completion report, journal paper submission, refined system for deployment.")
+        workplan.append(f"Decision Point: Assessment of readiness for real-world deployment. Proceed to Phase 3 if performance targets met.")
+        
+        workplan.append("\n\n7.3 Phase 3: Validation and Dissemination (Months 25-36)\n")
+        
+        workplan.append(f"This final phase emphasizes real-world validation, comprehensive documentation, and broad dissemination of findings.")
+        
+        workplan.append(f"\n\nMilestone 3.1 (Month 27): Real-World Deployment Preparation")
+        workplan.append(f"Prepare system for deployment in operational environments, develop deployment documentation, establish monitoring frameworks.")
+        workplan.append(f"Deliverables: Deployment-ready system, installation guides, operational documentation, monitoring tools.")
+        
+        workplan.append(f"\n\nMilestone 3.2 (Month 30): Deployment Validation and User Studies")
+        workplan.append(f"Deploy system in real-world environments, conduct validation studies with industry partners, collect user feedback.")
+        workplan.append(f"Deliverables: Deployment case studies, validation results, user feedback analysis, best practices documentation.")
+        
+        workplan.append(f"\n\nMilestone 3.3 (Month 33): Open-Source Release and Documentation")
+        workplan.append(f"Release complete open-source implementation, comprehensive documentation, tutorials, and example applications.")
+        workplan.append(f"Deliverables: Public GitHub repository, API documentation, user tutorials, demonstration videos, example datasets.")
+        
+        workplan.append(f"\n\nMilestone 3.4 (Month 36): Final Dissemination and Project Completion")
+        workplan.append(f"Submit final journal publications, present at major conferences, deliver final project report.")
+        workplan.append(f"Deliverables: Journal publications (2-3 papers), conference presentations (3-4 venues), final comprehensive report, trained graduate students.")
+        
+        workplan.append("\n\n7.4 Risk Management and Contingency Planning\n")
+        workplan.append(f"The timeline includes buffer periods for unexpected challenges and contingency plans for critical path items.")
+        
+        workplan.append(f"Regular quarterly reviews with advisory board will assess progress against milestones, identify risks early, and adjust plans as needed.")
+        
+        workplan.append(f"For each major milestone, we have identified alternative approaches that can be pursued if primary approaches encounter insurmountable obstacles.")
+        
+        workplan.append(f"Project management will follow agile principles allowing for adaptive planning while maintaining focus on core objectives.")
+        
+        workplan.append("\n\n7.5 Resource Allocation and Team Coordination\n")
+        workplan.append(f"Personnel effort distribution: PI (1 month/year summer salary) provides overall direction, theoretical guidance, and ensures quality; Graduate Student 1 (50% time, 36 months) focuses on algorithm development and implementation; Graduate Student 2 (50% time, 36 months) concentrates on experimentation and evaluation; Undergraduate researchers (summer support) assist with data collection, testing, and documentation.")
+        
+        workplan.append(f"Equipment and computational resources acquired in Phase 1 support all subsequent experimental work.")
+        
+        workplan.append(f"Travel budget allocated strategically: Phase 1 (1 conference for early feedback), Phase 2 (2-3 conferences for results dissemination), Phase 3 (2-3 conferences plus collaboration meetings).")
+        
+        workplan.append(f"Weekly team meetings ensure coordination, monthly progress reports track milestones, quarterly advisory board reviews provide external guidance.")
+        
+        return " ".join(workplan)
+    
+    def _generate_outcomes(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        outcomes = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        
+        outcomes.append(f"This research will produce significant outcomes across multiple dimensions with both immediate impact and long-term implications for {main_keyword}.")
+        
+        outcomes.append(self._add_transition("the work plan", "expected outcomes and broader impacts"))
+        
+        outcomes.append("\n\n8.1 Scientific and Intellectual Outcomes\n")
+        
+        outcomes.append(f"Novel theoretical contributions advancing fundamental understanding of {main_keyword} through formal frameworks, validated models, and testable propositions.")
+        
+        outcomes.append(f"Innovative methodologies addressing critical limitations in current approaches including improved algorithms, system architectures, and evaluation frameworks.")
+        
+        outcomes.append(f"Empirical findings demonstrating measurable performance improvements over state-of-the-art methods across multiple evaluation dimensions.")
+        
+        outcomes.append(f"Comprehensive evaluation frameworks and benchmarks applicable to future research in {main_keyword} and related domains.")
+        
+        outcomes.append(f"Deeper understanding of fundamental principles, mechanisms, and trade-offs that can guide future research directions.")
+        
+        outcomes.append("\n\n8.2 Technical and Software Outcomes\n")
+        
+        outcomes.append(f"Fully functional, production-ready system implementing the proposed approach with comprehensive documentation and APIs.")
+        
+        outcomes.append(f"Open-source software releases enabling reproduction, extension, and practical application by other researchers and practitioners.")
+        
+        outcomes.append(f"Curated datasets and benchmarks contributing to community resources and enabling standardized evaluation.")
+        
+        outcomes.append(f"Technical documentation including system architecture specifications, implementation guides, API references, and best practices documentation.")
+        
+        outcomes.append(f"Reusable software components and libraries applicable to related problems beyond the immediate research focus.")
+        
+        outcomes.append("\n\n8.3 Publications and Scholarly Dissemination\n")
+        
+        outcomes.append(f"Target 3-4 peer-reviewed journal publications in high-impact venues such as leading IEEE Transactions, ACM journals, or top-tier domain-specific journals.")
+        
+        outcomes.append(f"Target 4-6 conference presentations at premier international conferences including major IEEE/ACM conferences and domain-specific flagship venues.")
+        
+        outcomes.append(f"Technical reports documenting all findings, methodologies, and detailed experimental results.")
+        
+        outcomes.append(f"Open-access preprints ensuring broad accessibility and rapid dissemination of findings.")
+        
+        outcomes.append(f"Blog posts, tutorials, and educational materials for broader audience engagement beyond traditional academic venues.")
+        
+        outcomes.append("\n\n8.4 Practical Impact and Technology Transfer\n")
+        
+        outcomes.append(f"Demonstrated applicability in real-world scenarios through validation studies with industry partners.")
+        
+        outcomes.append(f"Potential for technology transfer and commercialization through industry collaborations and startup opportunities.")
+        
+        outcomes.append(f"Contributions to standards development and best practices in {main_keyword} through participation in relevant standards bodies and working groups.")
+        
+        outcomes.append(f"Foundation for future research funding opportunities and long-term research programs building on project outcomes.")
+        
+        outcomes.append(f"Practical tools and methodologies immediately usable by practitioners addressing real-world challenges in {main_keyword}.")
+        
+        outcomes.append("\n\n8.5 Education, Training, and Capacity Building\n")
+        
+        outcomes.append(f"Training of 2-3 graduate students in advanced research methods, gaining expertise in {main_keyword}, software development, experimental design, and scholarly communication.")
+        
+        outcomes.append(f"Development of educational materials including course modules, laboratory exercises, and workshop content suitable for graduate and advanced undergraduate courses.")
+        
+        outcomes.append(f"Mentorship of undergraduate researchers through summer programs and academic-year projects, providing early research experiences and pipeline development.")
+        
+        outcomes.append(f"Contribution to institutional research capacity in {main_keyword} through established expertise, infrastructure, and trained personnel.")
+        
+        outcomes.append(f"Workshop and tutorial presentations at major conferences, disseminating knowledge and training to broader research community.")
+        
+        outcomes.append("\n\n8.6 Broader Societal and Scientific Impact\n")
+        
+        outcomes.append(f"Advancement of knowledge with implications extending beyond immediate research domain into related fields and application areas.")
+        
+        outcomes.append(f"Potential societal benefits through improved technologies addressing real-world challenges in {main_keyword} applications.")
+        
+        outcomes.append(f"Contribution to addressing grand challenges and national priorities in {main_keyword} as identified by funding agencies and policy makers.")
+        
+        outcomes.append(f"Enhancement of research infrastructure through shared resources, tools, and datasets benefiting entire research community.")
+        
+        outcomes.append(f"Strengthening of collaborations between academia and industry, facilitating knowledge transfer and practical impact.")
+        
+        outcomes.append(f"Potential economic impact through technology commercialization, startup creation, and enhanced workforce preparation in high-demand technical skills.")
+        
+        return " ".join(outcomes)
+    
+    def _generate_risk_assessment(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        risks = []
+        
+        risks.append(f"We have conducted comprehensive risk assessment and developed detailed mitigation strategies for potential challenges that may arise during project execution.")
+        
+        risks.append(self._add_transition("expected outcomes", "potential risks and mitigation strategies"))
+        
+        risks.append("\n\nTable 3: Risk Assessment Matrix")
+        risks.append(self.table_gen.generate_risk_table())
+        
+        risks.append("\n\n9.1 Technical and Methodological Risks\n")
+        
+        risks.append(f"Risk: Performance targets may not be achieved in initial implementations.")
+        risks.append(f"Likelihood: Medium. Impact: Medium.")
+        risks.append(f"Mitigation: Iterative development approach with continuous evaluation, multiple alternative approaches prepared, buffer time allocated in schedule, advisory board consultation for major pivots.")
+        risks.append(f"Contingency: If primary approach underperforms, we will systematically evaluate alternative methods from literature, consult domain experts, and adjust objectives to reflect realistic achievable goals while maintaining scientific value.")
+        
+        risks.append(f"\n\nRisk: Scalability challenges in real-world deployment scenarios.")
+        risks.append(f"Likelihood: Medium. Impact: High.")
+        risks.append(f"Mitigation: Early scalability testing in Phase 1, incremental deployment strategy starting with small-scale validation, optimization expertise on team, access to high-performance computing resources.")
+        risks.append(f"Contingency: Focus on specific deployment scenarios where scalability requirements are manageable, develop scalability guidelines for different contexts, partner with institutions having appropriate infrastructure.")
+        
+        risks.append(f"\n\nRisk: Integration difficulties with existing systems and workflows.")
+        risks.append(f"Likelihood: Low. Impact: Medium.")
+        risks.append(f"Mitigation: Modular architecture design with standard interfaces, early prototype testing with partners, comprehensive API documentation, flexible configuration options.")
+        risks.append(f"Contingency: Develop adapter modules for common platforms, provide integration consulting support, create multiple deployment options for different environments.")
+        
+        risks.append("\n\n9.2 Resource and Infrastructure Risks\n")
+        
+        risks.append(f"Risk: Computational resources insufficient for large-scale experiments.")
+        risks.append(f"Likelihood: Low. Impact: Medium.")
+        risks.append(f"Mitigation: Cloud computing budget allocated, established relationships with institutional HPC facilities, efficient algorithms prioritized, resource-aware experimental design.")
+        risks.append(f"Contingency: Prioritize experiments with highest scientific value, leverage free cloud credits for research, collaborate with institutions having superior computational resources.")
+        
+        risks.append(f"\n\nRisk: Data availability, quality, or access issues.")
+        risks.append(f"Likelihood: Medium. Impact: Medium.")
+        risks.append(f"Mitigation: Multiple data sources identified, data collection protocols established, quality assurance procedures, partnerships with data providers, synthetic data generation capability.")
+        risks.append(f"Contingency: Use publicly available benchmark datasets exclusively, develop synthetic data generation methods validated against real data characteristics, adjust scope to focus on data-efficient methods.")
+        
+        risks.append("\n\n9.3 Personnel and Team Risks\n")
+        
+        risks.append(f"Risk: Key personnel departure or extended unavailability.")
+        risks.append(f"Likelihood: Low. Impact: High.")
+        risks.append(f"Mitigation: Cross-training of team members, comprehensive documentation, backup personnel identified, phased student recruitment, strong institutional support and competitive compensation.")
+        risks.append(f"Contingency: PI will increase time commitment temporarily, recruit replacement students from strong applicant pool, engage undergraduate researchers for continuity, extend timeline if necessary with agency approval.")
+        
+        risks.append(f"\n\nRisk: Difficulty recruiting qualified graduate students.")
+        risks.append(f"Likelihood: Low. Impact: Medium.")
+        risks.append(f"Mitigation: Strong institutional reputation, competitive stipends, exciting research topics, recruiting from multiple cohorts, established advisor track record.")
+        risks.append(f"Contingency: Leverage undergraduate researchers more extensively, collaborate with other research groups for student sharing, adjust project scope to match available personnel.")
+        
+        risks.append("\n\n9.4 Timeline and Schedule Risks\n")
+        
+        risks.append(f"Risk: Delays in critical path activities affecting subsequent phases.")
+        risks.append(f"Likelihood: Medium. Impact: Medium.")
+        risks.append(f"Mitigation: Conservative timeline estimates with built-in buffers, regular progress monitoring, early warning systems for potential delays, agile adaptation to emerging challenges.")
+        risks.append(f"Contingency: Reallocate personnel to critical tasks, adjust scope to maintain timeline for essential deliverables, request no-cost extension if necessary, parallelize activities where possible.")
+        
+        risks.append("\n\n9.5 External and Environmental Risks\n")
+        
+        risks.append(f"Risk: Changes in technology landscape or research priorities.")
+        risks.append(f"Likelihood: Low. Impact: Low.")
+        risks.append(f"Mitigation: Flexible research design adaptable to emerging trends, regular literature monitoring, advisory board guidance on field directions, fundamental research focus with lasting value.")
+        risks.append(f"Contingency: Pivot research emphasis to align with emerging priorities while maintaining core scientific contributions, emphasize transferable principles over technology-specific implementations.")
+        
+        risks.append(f"\n\nRisk: Pandemic or other disruptions affecting research operations.")
+        risks.append(f"Likelihood: Low. Impact: High.")
+        risks.append(f"Mitigation: Remote work capabilities established, cloud-based infrastructure, flexible work arrangements, comprehensive digital collaboration tools.")
+        risks.append(f"Contingency: Transition fully to remote operations, adjust experiments to use simulation where necessary, extend timeline with agency approval, focus on theoretical and analytical work during disruptions.")
+        
+        risks.append(f"\n\n9.6 Risk Monitoring and Management\n")
+        risks.append(f"Risk management will be integrated into regular project operations through quarterly risk assessments, monthly team discussions of potential issues, continuous monitoring of early warning indicators, and proactive rather than reactive responses.")
+        
+        risks.append(f"The project advisory board will provide independent assessment of risks and guidance on mitigation strategies during quarterly reviews.")
+        
+        return " ".join(risks)
+    
+    def _generate_budget(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        budget = []
+        
+        budget.append(f"The proposed budget supports comprehensive research activities over the 36-month project period, with all costs justified by specific research needs and deliverables.")
+        
+        budget.append(self._add_transition("risk assessment", "budget justification"))
+        
+        budget.append("\n\nTable 4: Budget Summary")
+        budget.append(self.table_gen.generate_budget_table())
+        
+        budget.append("\n\n10.1 Personnel Costs (Approximately 60% of total budget)\n")
+        
+        budget.append(f"Principal Investigator: One month summer salary per year (3 months total).")
+        budget.append(f"Justification: PI provides overall direction, theoretical guidance, research design, graduate student mentorship, paper writing, and ensures project quality. Summer salary enables focused time on research when teaching obligations are minimal.")
+        
+        budget.append(f"\n\nGraduate Research Assistants: Two students at 50% time for 36 months each.")
+        budget.append(f"Justification: Graduate Student 1 focuses on algorithm development, system implementation, and software engineering. Graduate Student 2 concentrates on experimental design, data analysis, and evaluation. Both contribute to paper writing and receive valuable research training. 50% time allows them to make satisfactory degree progress while contributing substantially to the project.")
+        
+        budget.append(f"\n\nUndergraduate Research Assistants: Summer support for 2-3 students per year.")
+        budget.append(f"Justification: Undergraduates assist with data collection, software testing, documentation, and preliminary experiments. Provides valuable research experience and pipeline development. Summer-only support allows intensive engagement without academic year conflicts.")
+        
+        budget.append(f"\n\nFringe Benefits: Calculated per institutional rates.")
+        budget.append(f"Justification: Mandatory fringe benefits for PI and graduate students per university policies.")
+        
+        budget.append("\n\n10.2 Equipment and Computational Resources (Approximately 20% of total budget)\n")
+        
+        budget.append(f"High-Performance Computing Workstations: Two workstations for development and preliminary analysis.")
+        budget.append(f"Justification: Workstations with GPU acceleration necessary for algorithm development, prototyping, and small-scale experiments. Provides immediate access for iterative development without queueing delays.")
+        
+        budget.append(f"\n\nCloud Computing Resources: Credits for large-scale experimentation.")
+        budget.append(f"Justification: Large-scale experiments requiring substantial computational resources best performed on cloud infrastructure. Provides flexibility to scale resources as needed without large upfront capital investment.")
+        
+        budget.append(f"\n\nSoftware Licenses: Development tools, analysis platforms, and specialized software.")
+        budget.append(f"Justification: Professional development environments, data analysis tools, and domain-specific software necessary for efficient research. Includes version control, continuous integration, and collaboration platforms.")
+        
+        budget.append(f"\n\nData Storage: High-capacity storage for datasets, experimental results, and backups.")
+        budget.append(f"Justification: Large datasets and comprehensive experimental results require substantial storage capacity. Includes redundant backups for data protection.")
+        
+        budget.append("\n\n10.3 Travel and Conferences (Approximately 10% of total budget)\n")
+        
+        budget.append(f"Domestic Conference Travel: 2-3 domestic conferences per year.")
+        budget.append(f"Justification: Presenting results at major domestic conferences essential for dissemination, community engagement, and feedback. Provides networking opportunities and keeps team current with field developments.")
+        
+        budget.append(f"\n\nInternational Conference Travel: 1-2 international conferences over project duration.")
+        budget.append(f"Justification: Presenting at premier international venues maximizes impact and visibility. Facilitates international collaborations and exposure to global research developments.")
+        
+        budget.append(f"\n\nCollaboration Meetings: Travel for meetings with industry partners and co-investigators.")
+        budget.append(f"Justification: Face-to-face meetings critical for effective collaboration, particularly for deployment validation and technology transfer activities.")
+        
+        budget.append("\n\n10.4 Other Direct Costs (Approximately 10% of total budget)\n")
+        
+        budget.append(f"Publication Costs: Open-access fees for journal publications.")
+        budget.append(f"Justification: Open-access publication ensures broad dissemination and complies with funding agency requirements. Estimated 3-4 journal papers at typical open-access rates.")
+        
+        budget.append(f"\n\nData Acquisition: Costs for specialized datasets or data collection services.")
+        budget.append(f"Justification: Some specialized data may require purchase or collection service fees. Ensures comprehensive evaluation across diverse data sources.")
+        
+        budget.append(f"\n\nParticipant Support: Incentives for user study participants.")
+        budget.append(f"Justification: User studies require participant compensation per institutional IRB guidelines. Enables recruitment of sufficient participants for statistically valid studies.")
+        
+        budget.append(f"\n\nSupplies and Materials: General research supplies, printing, and materials.")
+        budget.append(f"Justification: Miscellaneous supplies necessary for research operations including presentation materials, documentation, and general laboratory supplies.")
+        
+        budget.append("\n\n10.5 Indirect Costs\n")
+        budget.append(f"Institutional indirect costs calculated per federally negotiated rate agreement.")
+        budget.append(f"Justification: Indirect costs cover administrative support, facilities, utilities, libraries, and institutional research infrastructure. Rate and base per institutional agreement with federal government.")
+        
+        budget.append("\n\n10.6 Budget Notes and Justification Summary\n")
+        budget.append(f"The requested budget is appropriate and necessary for the scope and ambition of the proposed research.")
+        budget.append(f"All costs are justified by specific research activities, deliverables, and project requirements.")
+        budget.append(f"Resource allocation aligns with project timeline, with heavier equipment investment in Phase 1 and increased travel in Phases 2-3 for dissemination.")
+        budget.append(f"Budget leverages existing institutional resources including laboratory space, basic computational facilities, and library access, requesting only incremental resources specifically required for this project.")
+        budget.append(f"Personnel budget reflects market-competitive rates necessary to attract and retain qualified researchers in this technical field.")
+        
+        return " ".join(budget)
+    
+    def _generate_broader_impacts(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        impacts = []
+        
+        main_keyword = keywords.split(',')[0].strip()
+        
+        impacts.append(f"This research will generate substantial broader impacts extending well beyond immediate scientific contributions, addressing societal needs, educational goals, and infrastructure development.")
+        
+        impacts.append(self._add_transition("budget justification", "broader impacts"))
+        
+        impacts.append("\n\n11.1 Societal Benefits and Applications\n")
+        impacts.append(f"The research directly addresses practical challenges in {main_keyword} with potential for significant societal benefit.")
+        impacts.append(f"Improved technologies and methodologies developed through this work can enhance capabilities in critical application domains including national security, public health, economic competitiveness, and quality of life.")
+        impacts.append(f"Real-world deployment validation ensures that research advances translate into practical tools usable by practitioners and benefiting end users.")
+        impacts.append(f"Open-source releases enable broad adoption, democratizing access to advanced technologies and leveling the playing field for under-resourced institutions and organizations.")
+        
+        impacts.append("\n\n11.2 Education and Workforce Development\n")
+        impacts.append(f"The project will train 2-3 graduate students in cutting-edge research methods, preparing them for careers in academia, industry, or government addressing critical national needs in {main_keyword}.")
+        impacts.append(f"Graduate students will gain comprehensive skills including theoretical analysis, algorithm development, software engineering, experimental design, statistical analysis, technical writing, and scholarly communication.")
+        impacts.append(f"Undergraduate researchers will gain early research experience, potentially influencing career choices toward STEM fields and graduate education.")
+        impacts.append(f"Educational materials developed including course modules, tutorials, and workshops will benefit students beyond our institution through open distribution.")
+        impacts.append(f"Collaboration with industry partners provides students exposure to practical applications and career pathways, facilitating effective transition from academic training to professional practice.")
+        
+        impacts.append("\n\n11.3 Broadening Participation and Diversity\n")
+        impacts.append(f"We are committed to broadening participation of underrepresented groups in {main_keyword} research.")
+        impacts.append(f"Recruitment will actively target women and underrepresented minorities through partnerships with diversity-focused programs, presence at diversity conferences, and targeted outreach.")
+        impacts.append(f"Mentoring plans include specific attention to unique challenges faced by underrepresented students, connecting them with role models and support networks.")
+        impacts.append(f"Open educational materials and open-source software remove barriers to entry, enabling participation from institutions with limited resources.")
+        impacts.append(f"Workshop presentations at conferences with diversity initiatives will expose broader audiences to research opportunities in this field.")
+        
+        impacts.append("\n\n11.4 Research Infrastructure and Community Resources\n")
+        impacts.append(f"The project will enhance research infrastructure through multiple community resources.")
+        impacts.append(f"Open-source software releases provide reusable components and complete systems that other researchers can build upon, accelerating future research.")
+        impacts.append(f"Curated datasets and benchmarks establish standardized evaluation resources, enabling fair comparison across studies and reproducible research.")
+        impacts.append(f"Comprehensive documentation including tutorials, API references, and best practices guides lower barriers for new researchers entering the field.")
+        impacts.append(f"Contributions to open-source communities and standards bodies strengthen the collective research infrastructure benefiting entire research ecosystem.")
+        
+        impacts.append("\n\n11.5 Partnerships and Collaboration\n")
+        impacts.append(f"Industry partnerships facilitate technology transfer, ensuring that research advances reach practical deployment and benefit society.")
+        impacts.append(f"Collaborations between academia and industry provide mutual benefits: industry gains access to cutting-edge research and talent pipeline, while academia gains real-world validation opportunities and practical insights.")
+        impacts.append(f"These partnerships may spawn new collaborative research opportunities, joint funding proposals, and even startup companies commercializing research outcomes.")
+        impacts.append(f"International collaborations facilitated through conference participation and open-source contributions strengthen U.S. research leadership and global scientific cooperation.")
+        
+        impacts.append("\n\n11.6 Alignment with National Priorities\n")
+        impacts.append(f"This research directly supports national priorities in {main_keyword} as identified by funding agencies and policy documents.")
+        impacts.append(f"Advancing capabilities in {main_keyword} contributes to national competitiveness, security, and technological leadership in critical areas.")
+        impacts.append(f"Training highly skilled researchers addresses workforce needs in high-demand technical fields critical for national interests.")
+        impacts.append(f"Open dissemination and infrastructure contributions strengthen the national research enterprise and maintain U.S. leadership in science and technology.")
+        
+        return " ".join(impacts)
+    
+    def _generate_data_management(self, title: str, keywords: str, description: str, papers: List[Dict]) -> str:
+        dmp = []
+        
+        dmp.append(f"This Data Management Plan describes our approach to data collection, storage, sharing, and preservation, ensuring research reproducibility and compliance with funding agency requirements.")
+        
+        dmp.append(self._add_transition("broader impacts", "data management procedures"))
+        
+        dmp.append("\n\n12.1 Data Types and Formats\n")
+        dmp.append(f"The project will generate multiple types of data:")
+        dmp.append(f"Primary Research Data including benchmark datasets (public and newly collected), experimental results, performance measurements, and validation data. Formats: CSV, JSON, HDF5, and domain-standard formats.")
+        dmp.append(f"Software and Code including source code, scripts, configuration files, and computational notebooks. Formats: Python, C++, Jupyter notebooks, YAML, with version control via Git.")
+        dmp.append(f"Documentation including technical reports, methodology descriptions, API documentation, and user guides. Formats: Markdown, PDF, HTML.")
+        dmp.append(f"Publications including preprints, journal articles, conference papers, and posters. Formats: LaTeX source, PDF.")
+        
+        dmp.append("\n\n12.2 Data Storage and Backup\n")
+        dmp.append(f"During active research, data will be stored on institutional high-performance storage systems with automatic daily backups.")
+        dmp.append(f"Critical data will be replicated across multiple locations including on-site servers, institutional cloud storage, and external cloud services ensuring redundancy and disaster recovery.")
+        dmp.append(f"Version control systems (Git) will track all code and documentation changes, with remote repositories on GitHub providing additional backup and collaboration capabilities.")
+        dmp.append(f"Access controls and permissions will protect sensitive data while facilitating appropriate team access.")
+        dmp.append(f"Backup verification procedures will be conducted quarterly to ensure data recoverability.")
+        
+        dmp.append("\n\n12.3 Data Documentation and Metadata\n")
+        dmp.append(f"All datasets will include comprehensive metadata describing data sources, collection methods, preprocessing steps, file formats, and variable definitions.")
+        dmp.append(f"README files in each data directory will provide overview, context, and usage instructions.")
+        dmp.append(f"Code repositories will include documentation describing functionality, dependencies, installation procedures, and usage examples.")
+        dmp.append(f"Metadata will follow community standards where applicable, ensuring discoverability and interoperability.")
+        dmp.append(f"Data dictionaries will define all variables, measurement units, coding schemes, and valid value ranges.")
+        
+        dmp.append("\n\n12.4 Data Sharing and Public Access\n")
+        dmp.append(f"We are committed to open science principles and will share all data and code consistent with funding agency requirements and ethical considerations.")
+        dmp.append(f"Source code will be released as open-source software on GitHub under permissive licenses (MIT or Apache 2.0) enabling broad reuse.")
+        dmp.append(f"Datasets will be deposited in appropriate public repositories such as Zenodo, figshare, or domain-specific repositories, with persistent DOIs for citation.")
+        dmp.append(f"Publications will be made available as open-access preprints on arXiv or similar services, with final versions published in open-access journals where feasible.")
+        dmp.append(f"Data will be released upon publication of associated papers or at project completion, whichever comes first.")
+        dmp.append(f"Any data with privacy, security, or intellectual property restrictions will be clearly identified with explanation of access limitations.")
+        
+        dmp.append("\n\n12.5 Data Preservation and Long-term Access\n")
+        dmp.append(f"Data will be preserved for minimum 5 years beyond project completion, or longer if required by funding agency or institutional policies.")
+        dmp.append(f"Final datasets and code will be deposited in institutional repositories with long-term preservation commitments.")
+        dmp.append(f"Public repositories used (Zenodo, GitHub, etc.) provide long-term preservation with stable identifiers ensuring persistent access.")
+        dmp.append(f"Documentation will include sufficient detail to enable future researchers to understand and reuse data even without direct contact with original research team.")
+        dmp.append(f"Migration to new formats will be performed as needed if formats become obsolete, with both original and migrated versions preserved.")
+        
+        dmp.append("\n\n12.6 Roles and Responsibilities\n")
+        dmp.append(f"The Principal Investigator has overall responsibility for data management compliance and quality.")
+        dmp.append(f"Graduate students will manage day-to-day data organization, documentation, and version control under PI supervision.")
+        dmp.append(f"Designated team member will serve as data steward ensuring backup procedures, documentation standards, and sharing timelines are maintained.")
+        dmp.append(f"Annual reviews will assess data management practices and make adjustments as needed.")
+        
+        dmp.append("\n\n12.7 Ethical and Legal Considerations\n")
+        dmp.append(f"All data collection and sharing will comply with institutional IRB requirements if human subjects are involved.")
+        dmp.append(f"Privacy and confidentiality of any human subjects data will be protected through de-identification and appropriate access controls.")
+        dmp.append(f"Intellectual property rights will be respected, with appropriate licenses for all shared code and data.")
+        dmp.append(f"No proprietary or classified data will be collected, ensuring full public release is feasible.")
+        dmp.append(f"Funding agency requirements for data management and sharing will be followed explicitly.")
+        
+        return " ".join(dmp)
+
+
+generator = None
+
+def get_generator():
+    global generator
+    if generator is None:
+        generator = ProposalGenerator()
+    return generator
+
+
+def home(request):
+    return render(request, 'index.html')
+
+
+def generate_proposal_stream(request):
+    if request.method != 'POST':
+        return StreamingHttpResponse(
+            json.dumps({"type": "error", "content": "POST method required. Please submit the form properly."}) + "\n",
+            content_type='text/event-stream'
+        )
+    
+    title = request.POST.get('title', '').strip()
+    keywords = request.POST.get('keywords', '').strip()
+    description = request.POST.get('description', '').strip()
+    
+    if not title or not description:
+        return StreamingHttpResponse(
+            json.dumps({"type": "error", "content": "Title and description are required fields. Please provide both to generate a comprehensive proposal."}) + "\n",
+            content_type='text/event-stream'
+        )
+    
+    if len(description.split()) < 50:
+        return StreamingHttpResponse(
+            json.dumps({"type": "error", "content": "Please provide a more detailed description (minimum 50 words recommended). More detail results in higher quality, more specific proposals."}) + "\n",
+            content_type='text/event-stream'
+        )
+    
+    if not keywords:
+        keywords = title
+    
+    def event_stream():
+        try:
+            gen = get_generator()
+            for chunk in gen.generate_full_proposal(title, keywords, description):
+                yield f"data: {chunk}\n\n"
+        except Exception as e:
+            error_msg = json.dumps({
+                "type": "error", 
+                "content": f"An error occurred during generation: {str(e)}. Please try again or refine your inputs."
+            })
+            yield f"data: {error_msg}\n\n"
+    
+    response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
+    response['Cache-Control'] = 'no-cache'
+    response['X-Accel-Buffering'] = 'no'
+    return response

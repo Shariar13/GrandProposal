@@ -1,0 +1,249 @@
+from typing import List, Dict
+import random
+import re
+from collections import defaultdict
+
+
+class ParaphrasingEngine:
+    def __init__(self, citation_manager):
+        self.citation_manager = citation_manager
+        self.used_templates = defaultdict(list)
+        
+        self.intro_phrases = [
+            "Recent research has demonstrated that",
+            "Studies have shown that",
+            "Investigations reveal that",
+            "Empirical evidence suggests that",
+            "Prior work has established that",
+            "Contemporary studies indicate that",
+            "Research findings confirm that",
+            "Evidence from multiple sources shows that"
+        ]
+        
+        self.templates = {
+            'finding': [
+                "{intro} {authors} ({year}) {finding} {cite}.",
+                "{authors} ({year}) demonstrated that {finding} {cite}.",
+                "Research by {authors} ({year}) revealed {finding} {cite}.",
+                "In their work, {authors} ({year}) found that {finding} {cite}.",
+                "The study by {authors} ({year}) confirmed {finding} {cite}.",
+                "Experimental results from {authors} ({year}) showed {finding} {cite}.",
+                "According to {authors} ({year}), {finding} {cite}.",
+                "{authors} ({year}) reported {finding} {cite}."
+            ],
+            'method': [
+                "{authors} ({year}) employed {method} to address {application} challenges {cite}.",
+                "The approach developed by {authors} ({year}) utilizes {method} for {application} {cite}.",
+                "Building on {method}, {authors} ({year}) investigated {application} {cite}.",
+                "{authors} ({year}) proposed a novel {method}-based framework for {application} {cite}.",
+                "Using {method}, {authors} ({year}) tackled {application} problems {cite}.",
+                "{authors} ({year}) applied {method} techniques to {application} {cite}.",
+                "The {method} approach by {authors} ({year}) addressed {application} {cite}."
+            ],
+            'result': [
+                "{authors} ({year}) achieved {result} in their experimental evaluation {cite}.",
+                "Performance metrics demonstrated {result}, as reported by {authors} ({year}) {cite}.",
+                "Evaluation results from {authors} ({year}) indicated {result} {cite}.",
+                "The system developed by {authors} ({year}) attained {result} {cite}.",
+                "{authors} ({year}) reported {result} across multiple test scenarios {cite}.",
+                "Experimental validation by {authors} ({year}) showed {result} {cite}.",
+                "{authors} ({year}) demonstrated {result} through comprehensive testing {cite}."
+            ],
+            'challenge': [
+                "However, {authors} ({year}) identified {challenge} as a significant limitation {cite}.",
+                "Despite progress, {authors} ({year}) noted that {challenge} remain problematic {cite}.",
+                "Current approaches face {challenge}, as highlighted by {authors} ({year}) {cite}.",
+                "{authors} ({year}) pointed out that {challenge} require further investigation {cite}.",
+                "The work by {authors} ({year}) revealed {challenge} in existing solutions {cite}.",
+                "{authors} ({year}) observed {challenge} as a persistent issue {cite}.",
+                "Research by {authors} ({year}) uncovered {challenge} {cite}."
+            ],
+            'synthesis': [
+                "Multiple studies have examined {topic}, with particular emphasis on {aspect} {cite}.",
+                "Research in {topic} has consistently focused on {aspect} {cite}.",
+                "Several investigations have explored {aspect} in the context of {topic} {cite}.",
+                "The literature demonstrates significant progress in {aspect} for {topic} applications {cite}.",
+                "Collective evidence from multiple studies {cite} suggests that {aspect} is crucial for {topic}.",
+                "Comprehensive reviews of {topic} highlight {aspect} as a key factor {cite}.",
+                "Recent advances in {topic} emphasize {aspect} {cite}."
+            ]
+        }
+    
+    def _get_fresh_template(self, template_type: str, paper_id: str) -> str:
+        available = [t for t in self.templates[template_type] 
+                    if t not in self.used_templates[paper_id]]
+        
+        if not available:
+            self.used_templates[paper_id] = []
+            available = self.templates[template_type]
+        
+        template = random.choice(available)
+        self.used_templates[paper_id].append(template)
+        return template
+    
+    def paraphrase_finding(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('finding', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        intro = random.choice(self.intro_phrases) if '{intro}' in template else ''
+        authors_str = self._format_authors(paper['authors'])
+        
+        result = template.format(
+            intro=intro,
+            authors=authors_str,
+            year=paper['year'],
+            finding=facts['finding'],
+            cite=f"[{citation_num}]"
+        )
+        
+        return self._clean_sentence(result)
+    
+    def paraphrase_method(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('method', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        authors_str = self._format_authors(paper['authors'])
+        result = template.format(
+            authors=authors_str,
+            year=paper['year'],
+            method=facts['method'],
+            application=facts['application'],
+            cite=f"[{citation_num}]"
+        )
+        
+        return self._clean_sentence(result)
+    
+    def paraphrase_result(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('result', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        authors_str = self._format_authors(paper['authors'])
+        result = template.format(
+            authors=authors_str,
+            year=paper['year'],
+            result=facts['result'],
+            cite=f"[{citation_num}]"
+        )
+        
+        return self._clean_sentence(result)
+    
+    def paraphrase_challenge(self, paper: Dict, facts: Dict) -> str:
+        template = self._get_fresh_template('challenge', paper.get('doi', ''))
+        citation_num = self.citation_manager.add_citation(paper)
+        
+        authors_str = self._format_authors(paper['authors'])
+        result = template.format(
+            authors=authors_str,
+            year=paper['year'],
+            challenge=facts['challenge'],
+            cite=f"[{citation_num}]"
+        )
+        
+        return self._clean_sentence(result)
+    
+    def synthesize_multiple(self, papers: List[Dict], topic: str, aspect: str) -> str:
+        template = random.choice(self.templates['synthesis'])
+        citation_nums = [self.citation_manager.add_citation(p) for p in papers[:5]]
+        cite_text = f"[{', '.join(map(str, citation_nums))}]"
+        
+        result = template.format(
+            topic=topic,
+            aspect=aspect,
+            cite=cite_text
+        )
+        
+        return self._clean_sentence(result)
+    
+    def _format_authors(self, authors: List[str]) -> str:
+        if not authors:
+            return "Researchers"
+        
+        last_names = []
+        for author in authors[:2]:
+            parts = author.split()
+            last_names.append(parts[-1] if parts else author)
+        
+        if len(authors) == 1:
+            return last_names[0]
+        elif len(authors) == 2:
+            return f"{last_names[0]} and {last_names[1]}"
+        else:
+            return f"{last_names[0]} et al."
+    
+    def _clean_sentence(self, text: str) -> str:
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'\s+([.,;:])', r'\1', text)
+        text = text.strip()
+        return text
+
+
+class TextPostProcessor:
+    @staticmethod
+    def clean_text(text: str) -> str:
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'([.!?])\s*([A-Z])', r'\1 \2', text)
+        text = TextPostProcessor._remove_duplicate_words(text)
+        text = TextPostProcessor._fix_incomplete_sentences(text)
+        text = TextPostProcessor._split_long_paragraphs(text)
+        text = TextPostProcessor._ensure_proper_spacing(text)
+        return text.strip()
+    
+    @staticmethod
+    def _remove_duplicate_words(text: str) -> str:
+        text = re.sub(r'\b(\w+)\s+\1\b', r'\1', text, flags=re.IGNORECASE)
+        text = re.sub(r'shows?\s+that\s+shows?', 'shows', text, flags=re.IGNORECASE)
+        text = re.sub(r'demonstrates?\s+that\s+demonstrates?', 'demonstrates', text, flags=re.IGNORECASE)
+        text = re.sub(r'has\s+shown\s+shows', 'has shown', text, flags=re.IGNORECASE)
+        text = re.sub(r'achieved\s+achieved', 'achieved', text, flags=re.IGNORECASE)
+        text = re.sub(r'demonstrated\s+demonstrated', 'demonstrated', text, flags=re.IGNORECASE)
+        return text
+    
+    @staticmethod
+    def _fix_incomplete_sentences(text: str) -> str:
+        incomplete_endings = [
+            r'\s+are\s*[\.\,]', r'\s+is\s*[\.\,]', r'\s+for\s*[\.\,]', 
+            r'\s+to\s*[\.\,]', r'\s+the\s*[\.\,]', r'\s+and\s*[\.\,]', 
+            r'\s+in\s*[\.\,]', r'\s+of\s*[\.\,]', r'\s+with\s*[\.\,]',
+            r'\s+at\s*[\.\,]', r'\s+by\s*[\.\,]', r'\s+from\s*[\.\,]'
+        ]
+        
+        for pattern in incomplete_endings:
+            text = re.sub(pattern, '.', text)
+        
+        sentences = re.split(r'([.!?]\s+)', text)
+        complete_sentences = []
+        
+        for i in range(0, len(sentences)-1, 2):
+            sentence = sentences[i].strip()
+            separator = sentences[i+1] if i+1 < len(sentences) else ''
+            
+            if len(sentence.split()) >= 5:
+                complete_sentences.append(sentence + separator)
+        
+        return ''.join(complete_sentences)
+    
+    @staticmethod
+    def _split_long_paragraphs(text: str) -> str:
+        sentences = re.split(r'([.!?]\s+)', text)
+        result = []
+        sentence_count = 0
+        
+        for i in range(0, len(sentences)-1, 2):
+            sentence = sentences[i]
+            separator = sentences[i+1] if i+1 < len(sentences) else ''
+            result.append(sentence + separator)
+            sentence_count += 1
+            
+            if sentence_count >= 5 and i < len(sentences) - 2:
+                result.append('\n\n')
+                sentence_count = 0
+        
+        return ''.join(result)
+    
+    @staticmethod
+    def _ensure_proper_spacing(text: str) -> str:
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r'\s*\n\s*', '\n', text)
+        text = re.sub(r'\[\s+(\d+)', r'[\1', text)
+        text = re.sub(r'(\d+)\s+\]', r'\1]', text)
+        return text

@@ -1,0 +1,1617 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Generate Proposal - Grant Proposal Generator{% endblock %}
+
+{% block extra_css %}
+<style>
+    .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 3rem 2rem;
+    }
+
+    /* Enhanced Hero Section */
+    .hero-banner {
+        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 3rem;
+        color: white;
+        box-shadow: 0 8px 32px rgba(30, 58, 138, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .hero-banner::before {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -50%;
+        width: 200%;
+        height: 200%;
+        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        animation: pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); opacity: 0.5; }
+        50% { transform: scale(1.1); opacity: 0.3; }
+    }
+
+    .hero-content {
+        position: relative;
+        z-index: 1;
+    }
+
+    .hero-title {
+        font-family: 'Crimson Pro', serif;
+        font-size: 28px;
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+
+    .hero-subtitle {
+        font-size: 15px;
+        opacity: 0.9;
+    }
+
+    .main-grid {
+        display: grid;
+        grid-template-columns: 420px 1fr;
+        gap: 2.5rem;
+        animation: fadeInUp 0.6s ease;
+    }
+
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .input-panel {
+        background: var(--bg-white);
+        border-radius: 16px;
+        padding: 2rem;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+        border: 1px solid var(--border-light);
+        height: fit-content;
+        position: sticky;
+        top: 120px;
+        transition: all 0.3s ease;
+    }
+
+    .input-panel:hover {
+        box-shadow: 0 12px 48px rgba(0,0,0,0.12);
+        transform: translateY(-2px);
+    }
+
+    .panel-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding-bottom: 1.25rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid var(--border-light);
+    }
+
+    .panel-icon {
+        font-size: 24px;
+        background: linear-gradient(135deg, var(--primary-navy), var(--secondary-blue));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        animation: iconFloat 2s ease-in-out infinite;
+    }
+
+    @keyframes iconFloat {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-3px); }
+    }
+
+    .panel-title {
+        font-family: 'Crimson Pro', serif;
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text-dark);
+    }
+
+    .form-group {
+        margin-bottom: 1.5rem;
+        animation: fadeIn 0.5s ease backwards;
+    }
+
+    .form-group:nth-child(1) { animation-delay: 0.1s; }
+    .form-group:nth-child(2) { animation-delay: 0.2s; }
+    .form-group:nth-child(3) { animation-delay: 0.3s; }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateX(-10px); }
+        to { opacity: 1; transform: translateX(0); }
+    }
+
+    label {
+        display: block;
+        margin-bottom: 0.5rem;
+        color: var(--text-dark);
+        font-weight: 600;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .required {
+        color: var(--accent-gold);
+    }
+
+    input[type="text"],
+    textarea {
+        width: 100%;
+        padding: 0.875rem 1rem;
+        border: 2px solid var(--border-medium);
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: inherit;
+        transition: all 0.3s ease;
+        background: var(--bg-white);
+        color: var(--text-dark);
+    }
+
+    input[type="text"]:focus,
+    textarea:focus {
+        outline: none;
+        border-color: var(--primary-navy);
+        box-shadow: 0 0 0 4px rgba(30, 58, 138, 0.1);
+        transform: translateY(-1px);
+    }
+
+    textarea {
+        min-height: 120px;
+        resize: vertical;
+        line-height: 1.6;
+    }
+
+    .field-hint {
+        font-size: 11px;
+        color: var(--text-light);
+        margin-top: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+    }
+
+    .field-hint::before {
+        content: '💡';
+        font-size: 12px;
+    }
+
+    .btn-generate {
+        width: 100%;
+        background: linear-gradient(135deg, var(--primary-navy), #1e40af, var(--secondary-blue));
+        background-size: 200% 200%;
+        color: white;
+        padding: 1.1rem;
+        border: none;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.4s ease;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        box-shadow: 0 6px 20px rgba(30, 58, 138, 0.3);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .btn-generate::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+        transition: left 0.5s;
+    }
+
+    .btn-generate:hover:not(:disabled)::before {
+        left: 100%;
+    }
+
+    .btn-generate:hover:not(:disabled) {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 28px rgba(30, 58, 138, 0.4);
+        background-position: right center;
+    }
+
+    .btn-generate:active:not(:disabled) {
+        transform: translateY(-1px);
+    }
+
+    .btn-generate:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+    }
+
+    .spinner {
+        display: none;
+        width: 22px;
+        height: 22px;
+        border: 3px solid rgba(255,255,255,0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        margin: 0 auto;
+    }
+
+    .btn-generate.loading .spinner {
+        display: block;
+    }
+
+    .btn-generate.loading .btn-text {
+        display: none;
+    }
+
+    .progress-area {
+        display: none;
+        margin-top: 1.25rem;
+        padding: 1.25rem;
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        border-radius: 10px;
+        border: 2px solid #bae6fd;
+        animation: slideIn 0.3s ease;
+    }
+
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .progress-area.active {
+        display: block;
+    }
+
+    .progress-bar {
+        height: 6px;
+        background: #e0e7ff;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 0.75rem;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--secondary-blue), var(--primary-navy), var(--accent-gold));
+        background-size: 200% 100%;
+        transition: width 0.4s ease;
+        width: 0%;
+        animation: shimmer 2s infinite;
+        border-radius: 10px;
+    }
+
+    @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    .status-text {
+        font-size: 13px;
+        color: var(--text-dark);
+        text-align: center;
+        font-weight: 500;
+    }
+
+    .output-panel {
+        background: var(--bg-white);
+        border-radius: 16px;
+        padding: 0;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+        border: 1px solid var(--border-light);
+        min-height: 800px;
+        transition: all 0.3s ease;
+        position: relative;
+    }
+
+    .output-panel:hover {
+        box-shadow: 0 12px 48px rgba(0,0,0,0.12);
+    }
+
+    /* AI Enhancement Styles */
+    .enhancement-badge {
+        display: none;
+        position: absolute;
+        top: 1.5rem;
+        right: 2rem;
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 600;
+        z-index: 10;
+        animation: badgeAppear 0.5s ease;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+    }
+
+    .enhancement-badge.active {
+        display: block;
+    }
+
+    @keyframes badgeAppear {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Enhancement Progress Bar */
+    .enhancement-progress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: var(--border-light);
+        z-index: 10000;
+        display: none;
+    }
+
+    .enhancement-progress.active {
+        display: block;
+    }
+
+    .enhancement-progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #8b5cf6, #6366f1, #3b82f6);
+        background-size: 200% 100%;
+        width: 0%;
+        transition: width 0.3s ease;
+        animation: shimmer 2s infinite;
+    }
+
+    /* Enhancement Modal */
+    .enhancement-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        animation: fadeIn 0.3s ease;
+    }
+
+    .enhancement-overlay.active {
+        display: flex;
+    }
+
+    .enhancement-modal {
+        background: white;
+        border-radius: 20px;
+        padding: 3rem;
+        max-width: 500px;
+        text-align: center;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        animation: modalSlideIn 0.4s ease;
+    }
+
+    @keyframes modalSlideIn {
+        from {
+            opacity: 0;
+            transform: translateY(-50px) scale(0.9);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+    }
+
+    .enhancement-icon {
+        font-size: 64px;
+        margin-bottom: 1.5rem;
+        animation: iconPulse 2s ease-in-out infinite;
+    }
+
+    @keyframes iconPulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+    }
+
+    .enhancement-title {
+        font-family: 'Crimson Pro', serif;
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--primary-navy);
+        margin-bottom: 1rem;
+    }
+
+    .enhancement-description {
+        color: var(--text-medium);
+        margin-bottom: 2rem;
+        line-height: 1.6;
+    }
+
+    .enhancement-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+        margin-bottom: 2rem;
+    }
+
+    .stat-box {
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        padding: 1rem;
+        border-radius: 12px;
+        border: 2px solid #bae6fd;
+    }
+
+    .stat-label {
+        font-size: 12px;
+        color: var(--text-light);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 0.5rem;
+    }
+
+    .stat-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--primary-navy);
+        font-family: 'Crimson Pro', serif;
+    }
+
+    .modal-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+    }
+
+    .btn-modal {
+        padding: 0.875rem 2rem;
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: none;
+    }
+
+    .btn-confirm {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1);
+        color: white;
+    }
+
+    .btn-confirm:hover {
+        background: linear-gradient(135deg, #7c3aed, #4f46e5);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(139, 92, 246, 0.3);
+    }
+
+    .btn-cancel {
+        background: white;
+        color: var(--text-dark);
+        border: 2px solid var(--border-medium);
+    }
+
+    .btn-cancel:hover {
+        border-color: var(--primary-navy);
+        transform: translateY(-2px);
+    }
+
+    .output-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1.75rem 2rem;
+        border-bottom: 2px solid var(--border-light);
+        background: linear-gradient(135deg, #f9fafb, #ffffff);
+    }
+
+    .output-actions {
+        display: none;
+        gap: 0.75rem;
+        animation: fadeIn 0.5s ease;
+    }
+
+    .output-actions.active {
+        display: flex;
+    }
+
+    .btn-action {
+        padding: 0.6rem 1.2rem;
+        background: white;
+        border: 2px solid var(--border-medium);
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+        transition: all 0.3s ease;
+        color: var(--text-dark);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .btn-action::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 0;
+        height: 0;
+        border-radius: 50%;
+        background: rgba(30, 58, 138, 0.1);
+        transform: translate(-50%, -50%);
+        transition: width 0.4s, height 0.4s;
+    }
+
+    .btn-action:hover::before {
+        width: 300px;
+        height: 300px;
+    }
+
+    .btn-action:hover {
+        border-color: var(--primary-navy);
+        color: var(--primary-navy);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    /* AI Enhancement Button */
+    .btn-enhance {
+        background: linear-gradient(135deg, #8b5cf6, #6366f1, #3b82f6);
+        background-size: 200% 200%;
+        color: white;
+        border: none;
+        animation: gradientShift 3s ease infinite;
+        position: relative;
+    }
+
+    .btn-enhance::after {
+        content: ' ✨';
+    }
+
+    @keyframes gradientShift {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+    }
+
+    .btn-enhance:hover {
+        background: linear-gradient(135deg, #7c3aed, #4f46e5, #2563eb);
+        color: white;
+        box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-enhance.enhancing {
+        background: linear-gradient(90deg, #8b5cf6, #6366f1, #3b82f6, #8b5cf6);
+        background-size: 300% 100%;
+        animation: enhanceProgress 2s linear infinite;
+        pointer-events: none;
+    }
+
+    @keyframes enhanceProgress {
+        0% { background-position: 0% 0%; }
+        100% { background-position: 100% 0%; }
+    }
+
+    .btn-enhance.enhanced {
+        background: linear-gradient(135deg, #10b981, #059669);
+        animation: none;
+    }
+
+    .btn-enhance.enhanced::after {
+        content: ' ✓';
+    }
+
+    .btn-download {
+        background: linear-gradient(135deg, var(--primary-navy), var(--secondary-blue));
+        color: white;
+        border: none;
+    }
+
+    .btn-download:hover {
+        background: linear-gradient(135deg, #1e40af, var(--primary-navy));
+        color: white;
+        box-shadow: 0 6px 20px rgba(30, 58, 138, 0.3);
+    }
+
+    /* Text Animation Styles */
+    .text-morphing {
+        animation: textMorph 0.5s ease;
+    }
+
+    @keyframes textMorph {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.3; transform: scale(0.98); }
+    }
+
+    .section-enhancing {
+        position: relative;
+        background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.1), transparent);
+        background-size: 200% 100%;
+        animation: sectionScan 2s linear infinite;
+    }
+
+    @keyframes sectionScan {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    .paragraph.updating {
+        animation: paragraphUpdate 0.6s ease;
+    }
+
+    @keyframes paragraphUpdate {
+        0% {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        50% {
+            opacity: 0.4;
+            transform: translateX(-10px);
+        }
+        100% {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+
+    .document-area {
+        padding: 3rem 4rem;
+        font-family: 'Crimson Pro', serif;
+        line-height: 2;
+        color: var(--text-dark);
+        font-size: 16px;
+        max-width: 900px;
+        margin: 0 auto;
+    }
+
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 600px;
+        color: var(--text-light);
+        animation: fadeIn 0.5s ease;
+    }
+
+    .empty-icon {
+        font-size: 80px;
+        margin-bottom: 1.5rem;
+        opacity: 0.3;
+        animation: bounce 2s ease-in-out infinite;
+    }
+
+    @keyframes bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+    }
+
+    .empty-state h3 {
+        font-family: 'Crimson Pro', serif;
+        font-size: 22px;
+        margin-bottom: 0.5rem;
+        color: var(--text-medium);
+    }
+
+    .proposal-doc {
+        display: none;
+        animation: fadeIn 0.6s ease;
+    }
+
+    .proposal-doc.active {
+        display: block;
+    }
+
+    .doc-title {
+        font-size: 36px;
+        font-weight: 700;
+        text-align: center;
+        margin-bottom: 1rem;
+        color: var(--primary-navy);
+        letter-spacing: -0.5px;
+        animation: slideDown 0.5s ease;
+    }
+
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .doc-meta {
+        text-align: center;
+        margin-bottom: 3rem;
+        padding-bottom: 2rem;
+        border-bottom: 3px double var(--border-medium);
+        font-size: 14px;
+        color: var(--text-medium);
+    }
+
+    .meta-item {
+        margin: 0.25rem 0;
+    }
+
+    .meta-label {
+        font-weight: 700;
+        color: var(--text-dark);
+    }
+
+    .section-heading {
+        font-size: 26px;
+        font-weight: 700;
+        margin-top: 3rem;
+        margin-bottom: 1.5rem;
+        color: var(--primary-navy);
+        padding-bottom: 0.75rem;
+        border-bottom: 3px solid var(--accent-gold);
+        letter-spacing: -0.3px;
+        position: relative;
+    }
+
+    .section-heading::after {
+        content: '';
+        position: absolute;
+        bottom: -3px;
+        left: 0;
+        width: 60px;
+        height: 3px;
+        background: var(--secondary-blue);
+    }
+
+    .section-heading:first-of-type {
+        margin-top: 0;
+    }
+
+    .subsection-heading {
+        font-size: 20px;
+        font-weight: 700;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+        color: var(--text-dark);
+    }
+
+    .paragraph {
+        margin-bottom: 1.25rem;
+        text-align: justify;
+        line-height: 1.9;
+    }
+
+    .citation {
+        color: var(--secondary-blue);
+        font-weight: 600;
+        font-size: 14px;
+        font-family: 'Inter', sans-serif;
+        transition: all 0.2s ease;
+        cursor: help;
+    }
+
+    .citation:hover {
+        color: var(--primary-navy);
+        text-decoration: underline;
+    }
+
+    .table-wrapper {
+        margin: 2rem 0;
+        overflow-x: auto;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    .table-caption {
+        font-weight: 700;
+        margin-bottom: 0.75rem;
+        color: var(--text-dark);
+        font-size: 15px;
+    }
+
+    .references-section {
+        margin-top: 4rem;
+        padding-top: 3rem;
+        border-top: 3px double var(--border-medium);
+    }
+
+    .reference-item {
+        margin-bottom: 1rem;
+        padding-left: 2rem;
+        text-indent: -2rem;
+        font-size: 14px;
+        line-height: 1.6;
+        transition: all 0.2s ease;
+    }
+
+    .reference-item:hover {
+        background: #f9fafb;
+        padding-left: 2.5rem;
+    }
+
+    .word-stats {
+        display: none;
+        text-align: center;
+        padding: 1.25rem;
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        border-top: 2px solid var(--border-light);
+        font-size: 13px;
+        color: var(--text-dark);
+        font-weight: 500;
+    }
+
+    .word-stats.active {
+        display: block;
+        animation: slideUp 0.5s ease;
+    }
+
+    @keyframes slideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    @media print {
+        .input-panel, .output-header, .word-stats, .hero-banner, .enhancement-badge {
+            display: none;
+        }
+        .main-grid {
+            grid-template-columns: 1fr;
+        }
+        .document-area {
+            padding: 0;
+        }
+    }
+
+    @media (max-width: 1200px) {
+        .main-grid {
+            grid-template-columns: 1fr;
+        }
+        .input-panel {
+            position: relative;
+            top: 0;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .hero-banner {
+            padding: 1.5rem;
+        }
+        .document-area {
+            padding: 2rem 1.5rem;
+        }
+        .enhancement-modal {
+            padding: 2rem;
+            margin: 1rem;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Enhancement Progress Bar -->
+    <div class="enhancement-progress" id="enhancementProgress">
+        <div class="enhancement-progress-bar" id="enhancementProgressBar"></div>
+    </div>
+
+    <!-- Enhancement Modal -->
+    <div class="enhancement-overlay" id="enhancementOverlay">
+        <div class="enhancement-modal">
+            <div class="enhancement-icon">🚀</div>
+            <h2 class="enhancement-title">AI Enhancement</h2>
+            <p class="enhancement-description">
+                This will expand your proposal to EU Horizon Europe standards (50-100 pages) 
+                while preserving all citations and references. The process may take 5-10 minutes.
+            </p>
+            <div class="enhancement-stats">
+                <div class="stat-box">
+                    <div class="stat-label">Current Pages</div>
+                    <div class="stat-value" id="currentPages">0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Target Pages</div>
+                    <div class="stat-value">50-100</div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn-modal btn-confirm" onclick="confirmEnhancement()">
+                    Start Enhancement
+                </button>
+                <button class="btn-modal btn-cancel" onclick="cancelEnhancement()">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="hero-banner">
+        <div class="hero-content">
+            <h2 class="hero-title">AI-Powered Grant Proposal Generation</h2>
+            <p class="hero-subtitle">Generate comprehensive, well-cited research proposals in minutes using real-time academic literature</p>
+        </div>
+    </div>
+
+    <div class="main-grid">
+        <div class="input-panel">
+            <div class="panel-header">
+                <span class="panel-icon">📋</span>
+                <h2 class="panel-title">Project Information</h2>
+            </div>
+
+            <form id="proposalForm">
+                {% csrf_token %}
+                
+                <div class="form-group">
+                    <label for="title">Project Title <span class="required">*</span></label>
+                    <input type="text" id="title" name="title" placeholder="Enter your research project title" required>
+                    <div class="field-hint">Clear, descriptive title for your research</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="keywords">Research Keywords</label>
+                    <input type="text" id="keywords" name="keywords" placeholder="e.g., machine learning, network security, 6G">
+                    <div class="field-hint">Comma-separated keywords for literature search</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="description">Project Description <span class="required">*</span></label>
+                    <textarea id="description" name="description" placeholder="Describe your research objectives, methodology, and expected outcomes in detail (minimum 50 words recommended for best results)..." required></textarea>
+                    <div class="field-hint">Detailed description improves proposal quality</div>
+                </div>
+
+                <button type="submit" class="btn-generate" id="generateBtn">
+                    <span class="btn-text">Generate Proposal</span>
+                    <div class="spinner"></div>
+                </button>
+
+                <div class="progress-area" id="progressArea">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="status-text" id="statusText">Initializing...</div>
+                </div>
+            </form>
+        </div>
+
+        <div class="output-panel">
+            <div class="enhancement-badge" id="enhancementBadge">
+                AI Enhanced ✨
+            </div>
+            
+            <div class="output-header">
+                <div class="panel-header" style="margin: 0; padding: 0; border: none;">
+                    <span class="panel-icon">📄</span>
+                    <h2 class="panel-title">Generated Proposal</h2>
+                </div>
+                <div class="output-actions" id="outputActions">
+                    <button class="btn-action btn-enhance" id="enhanceBtn" style="display:none;" onclick="showEnhancementModal()">
+                        Enhance with AI
+                    </button>
+                    <button class="btn-action btn-download" onclick="downloadDOCX()">Download DOCX</button>
+                    <button class="btn-action" onclick="saveProposal()">Save to Profile</button>
+                    <button class="btn-action" onclick="copyText()">Copy Text</button>
+                    <button class="btn-action" onclick="window.print()">Print</button>
+                </div>
+            </div>
+
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon">📄</div>
+                <h3>No Proposal Generated</h3>
+                <p>Complete the form and generate your proposal</p>
+            </div>
+
+            <div class="document-area">
+                <div class="proposal-doc" id="proposalDoc"></div>
+            </div>
+
+            <div class="word-stats" id="wordStats">
+                <strong>Document Statistics:</strong> <span id="totalWords">0</span> words | <span id="totalPages">0</span> pages | <span id="totalCitations">0</span> citations
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const form = document.getElementById('proposalForm');
+    const generateBtn = document.getElementById('generateBtn');
+    const progressArea = document.getElementById('progressArea');
+    const progressFill = document.getElementById('progressFill');
+    const statusText = document.getElementById('statusText');
+    const emptyState = document.getElementById('emptyState');
+    const proposalDoc = document.getElementById('proposalDoc');
+    const outputActions = document.getElementById('outputActions');
+    const wordStats = document.getElementById('wordStats');
+
+    let proposalText = '';
+    let proposalTitle = '';
+    let proposalKeywords = '';
+    let proposalDescription = '';
+    let currentProgress = 0;
+    let buffer = '';
+    let enhancedProposal = '';
+    let isEnhancing = false;
+    let enhancementBuffer = '';
+
+    // RAG Generation
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const formData = new FormData(form);
+        proposalTitle = formData.get('title');
+        proposalKeywords = formData.get('keywords');
+        proposalDescription = formData.get('description');
+        
+        generateBtn.disabled = true;
+        generateBtn.classList.add('loading');
+        progressArea.classList.add('active');
+        emptyState.style.display = 'none';
+        proposalDoc.classList.remove('active');
+        proposalDoc.innerHTML = '';
+        outputActions.classList.remove('active');
+        wordStats.classList.remove('active');
+        document.getElementById('enhancementBadge').classList.remove('active');
+        proposalText = '';
+        buffer = '';
+        currentProgress = 0;
+        updateProgress(5);
+
+        try {
+            const response = await fetch('/generate/', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': formData.get('csrfmiddlewaretoken')
+                }
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            proposalDoc.classList.add('active');
+            let dataBuffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                dataBuffer += decoder.decode(value, { stream: true });
+                const lines = dataBuffer.split('\n');
+                dataBuffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.substring(6));
+                        
+                        if (data.type === 'status') {
+                            showStatus(data.content);
+                            updateProgress(Math.min(currentProgress + 7, 90));
+                        } 
+                        else if (data.type === 'content') {
+                            buffer += data.content;
+                            processBuffer();
+                            proposalText += data.content;
+                            updateWordCount();
+                        } 
+                        else if (data.type === 'complete') {
+                            if (buffer.trim()) {
+                                proposalDoc.innerHTML += formatContent(buffer);
+                                buffer = '';
+                            }
+                            updateProgress(100);
+                            showStatus(data.content);
+                            setTimeout(() => {
+                                progressArea.classList.remove('active');
+                                outputActions.classList.add('active');
+                                wordStats.classList.add('active');
+                                document.getElementById('enhanceBtn').style.display = 'inline-flex';
+                            }, 1500);
+                        } 
+                        else if (data.type === 'error') {
+                            showStatus(data.content);
+                            emptyState.style.display = 'flex';
+                            proposalDoc.classList.remove('active');
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            showStatus('Error: ' + error.message);
+            emptyState.style.display = 'flex';
+            proposalDoc.classList.remove('active');
+        } finally {
+            generateBtn.disabled = false;
+            generateBtn.classList.remove('loading');
+        }
+    });
+
+    // Enhancement Modal Functions
+    function showEnhancementModal() {
+        if (!proposalText) {
+            showStatus('No proposal to enhance!');
+            return;
+        }
+
+        const words = proposalText.trim().split(/\s+/).length;
+        const currentPages = Math.ceil(words / 400);
+        document.getElementById('currentPages').textContent = currentPages;
+        document.getElementById('enhancementOverlay').classList.add('active');
+    }
+
+    function cancelEnhancement() {
+        document.getElementById('enhancementOverlay').classList.remove('active');
+    }
+
+    async function confirmEnhancement() {
+        document.getElementById('enhancementOverlay').classList.remove('active');
+        await enhanceProposal();
+    }
+
+    // AI Enhancement
+    async function enhanceProposal() {
+        if (isEnhancing) return;
+        
+        isEnhancing = true;
+        const enhanceBtn = document.getElementById('enhanceBtn');
+        const enhancementProgress = document.getElementById('enhancementProgress');
+        const enhancementProgressBar = document.getElementById('enhancementProgressBar');
+        
+        enhanceBtn.classList.add('enhancing');
+        enhanceBtn.textContent = 'Enhancing...';
+        enhanceBtn.disabled = true;
+        
+        enhancementProgress.classList.add('active');
+        enhancementProgressBar.style.width = '5%';
+        
+        // Animate out existing content
+        const paragraphs = proposalDoc.querySelectorAll('.paragraph, .section-heading, .subsection-heading');
+        paragraphs.forEach((p, i) => {
+            setTimeout(() => {
+                p.classList.add('text-morphing');
+            }, i * 20);
+        });
+        
+        setTimeout(() => {
+            proposalDoc.innerHTML = '';
+            proposalDoc.classList.add('active');
+        }, 500);
+        
+        progressArea.classList.add('active');
+        enhancedProposal = '';
+        enhancementBuffer = '';
+        let enhancementProgressValue = 5;
+        
+        const formData = new FormData();
+        formData.append('proposal_content', proposalText);
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        
+        try {
+            const response = await fetch('/enhance/', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let dataBuffer = '';
+            let currentSection = null;
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                dataBuffer += decoder.decode(value, { stream: true });
+                const lines = dataBuffer.split('\n');
+                dataBuffer = lines.pop();
+                
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.substring(6));
+                        
+                        if (data.type === 'status') {
+                            showStatus(data.content);
+                            enhancementProgressValue = Math.min(enhancementProgressValue + 5, 95);
+                            enhancementProgressBar.style.width = enhancementProgressValue + '%';
+                            progressFill.style.width = enhancementProgressValue + '%';
+                        } 
+                        else if (data.type === 'content') {
+                            enhancementBuffer += data.content;
+                            
+                            if (data.content.match(/^(Executive Summary|REFERENCES|\d+\.\s+.+?)$/)) {
+                                currentSection = data.content.trim();
+                            }
+                            
+                            processEnhancementBuffer(currentSection);
+                            enhancedProposal += data.content;
+                        } 
+                        else if (data.type === 'complete') {
+                            if (enhancementBuffer.trim()) {
+                                const formatted = formatContent(enhancementBuffer);
+                                if (formatted) {
+                                    appendWithAnimation(formatted);
+                                }
+                                enhancementBuffer = '';
+                            }
+                            
+                            enhancementProgressValue = 100;
+                            enhancementProgressBar.style.width = '100%';
+                            progressFill.style.width = '100%';
+                            showStatus(data.content);
+                            
+                            proposalText = enhancedProposal;
+                            updateWordCount();
+                            
+                            document.getElementById('enhancementBadge').classList.add('active');
+                            
+                            setTimeout(() => {
+                                progressArea.classList.remove('active');
+                                enhancementProgress.classList.remove('active');
+                                enhanceBtn.classList.remove('enhancing');
+                                enhanceBtn.classList.add('enhanced');
+                                enhanceBtn.textContent = 'Enhanced';
+                                enhanceBtn.disabled = false;
+                            }, 1500);
+                        } 
+                        else if (data.type === 'error') {
+                            showStatus('Error: ' + data.content);
+                            enhanceBtn.classList.remove('enhancing');
+                            enhanceBtn.textContent = 'Enhance with AI';
+                            enhanceBtn.disabled = false;
+                            enhancementProgress.classList.remove('active');
+                        }
+                        else if (data.type === 'warning') {
+                            console.warn('Enhancement warning:', data.content);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            showStatus('Enhancement error: ' + error.message);
+            enhanceBtn.classList.remove('enhancing');
+            enhanceBtn.textContent = 'Enhance with AI';
+            enhanceBtn.disabled = false;
+            enhancementProgress.classList.remove('active');
+        } finally {
+            isEnhancing = false;
+        }
+    }
+
+    function processEnhancementBuffer(currentSection) {
+        const lines = enhancementBuffer.split('\n');
+        
+        for (let i = 0; i < lines.length - 1; i++) {
+            const line = lines[i].trim();
+            if (line) {
+                const formatted = formatContent(line + '\n');
+                if (formatted) {
+                    appendWithAnimation(formatted, currentSection);
+                }
+            }
+        }
+        
+        enhancementBuffer = lines[lines.length - 1];
+    }
+
+    function appendWithAnimation(htmlContent, sectionClass = null) {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = htmlContent;
+        tempDiv.style.opacity = '0';
+        tempDiv.style.transform = 'translateY(10px)';
+        tempDiv.style.transition = 'all 0.4s ease';
+        
+        if (sectionClass) {
+            tempDiv.classList.add('section-enhancing');
+        }
+        
+        proposalDoc.appendChild(tempDiv);
+        
+        setTimeout(() => {
+            tempDiv.style.opacity = '1';
+            tempDiv.style.transform = 'translateY(0)';
+        }, 10);
+        
+        setTimeout(() => {
+            tempDiv.style.opacity = '';
+            tempDiv.style.transform = '';
+            tempDiv.style.transition = '';
+            if (sectionClass) {
+                tempDiv.classList.remove('section-enhancing');
+            }
+            
+            while (tempDiv.firstChild) {
+                proposalDoc.appendChild(tempDiv.firstChild);
+            }
+            tempDiv.remove();
+        }, 450);
+        
+        proposalDoc.parentElement.scrollTo({
+            top: proposalDoc.parentElement.scrollHeight,
+            behavior: 'smooth'
+        });
+    }
+
+    // Save Proposal
+    async function saveProposal() {
+        {% if user.is_authenticated %}
+        if (!proposalText || !proposalTitle) {
+            showStatus('No proposal to save!');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('title', proposalTitle);
+        formData.append('keywords', proposalKeywords);
+        formData.append('description', proposalDescription);
+        formData.append('content', proposalText);
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+        try {
+            const response = await fetch('{% url "save_proposal" %}', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            
+            if (result.success) {
+                showStatus('Proposal saved successfully! Redirecting to profile...');
+                setTimeout(() => {
+                    window.location.href = '{% url "profile" %}';
+                }, 1500);
+            } else {
+                showStatus('Failed to save proposal: ' + (result.error || 'Unknown error'));
+            }
+        } catch (error) {
+            showStatus('Error saving proposal: ' + error.message);
+        }
+        {% else %}
+        if (confirm('You need to login to save proposals. Redirect to login page?')) {
+            window.location.href = '{% url "login" %}?next={{ request.path }}';
+        }
+        {% endif %}
+    }
+
+    function processBuffer() {
+        const lines = buffer.split('\n');
+        
+        for (let i = 0; i < lines.length - 1; i++) {
+            const line = lines[i].trim();
+            if (line) {
+                proposalDoc.innerHTML += formatContent(line + '\n');
+            }
+        }
+        
+        buffer = lines[lines.length - 1];
+    }
+
+    function formatContent(text) {
+        if (text.includes('GRANT PROPOSAL')) {
+            return '';
+        }
+        
+        if (text.match(/^Title:\s*(.+)/)) {
+            const title = text.match(/^Title:\s*(.+)/)[1];
+            return `<h1 class="doc-title">${title}</h1>`;
+        }
+        
+        if (text.match(/^Keywords:\s*(.+)/)) {
+            const keywords = text.match(/^Keywords:\s*(.+)/)[1];
+            return `<div class="doc-meta"><div class="meta-item"><span class="meta-label">Keywords:</span> ${keywords}</div>`;
+        }
+        
+        if (text.match(/^Duration:\s*(.+)/)) {
+            const duration = text.match(/^Duration:\s*(.+)/)[1];
+            return `<div class="meta-item"><span class="meta-label">Duration:</span> ${duration}</div></div>`;
+        }
+        
+        if (text.match(/^(Executive Summary|REFERENCES|\d+\.\s+.+?)$/)) {
+            return `<h2 class="section-heading">${text.trim()}</h2>`;
+        }
+        
+        if (text.match(/^\d+\.\d+\s+.+/)) {
+            return `<h3 class="subsection-heading">${text.trim()}</h3>`;
+        }
+        
+        if (text.match(/^Table \d+:/)) {
+            return `<div class="table-caption">${text.trim()}</div>`;
+        }
+        
+        if (text.match(/^\[\d+\]/)) {
+            return `<div class="reference-item">${formatCitations(text)}</div>`;
+        }
+        
+        if (text.match(/^={60,}/)) {
+            return '';
+        }
+        
+        const formatted = formatCitations(text);
+        if (formatted.trim()) {
+            return `<p class="paragraph">${formatted}</p>`;
+        }
+        
+        return '';
+    }
+
+    function formatCitations(text) {
+        return text.replace(/\[(\d+(?:,\s*\d+)*)\]/g, '<span class="citation">[$1]</span>');
+    }
+
+    function updateProgress(percent) {
+        currentProgress = percent;
+        progressFill.style.width = percent + '%';
+    }
+
+    function showStatus(message) {
+        statusText.textContent = message;
+    }
+
+    function updateWordCount() {
+        const words = proposalText.trim().split(/\s+/).length;
+        const pages = Math.ceil(words / 400);
+        const citations = (proposalText.match(/\[\d+/g) || []).length;
+        
+        document.getElementById('totalWords').textContent = words.toLocaleString();
+        document.getElementById('totalPages').textContent = pages;
+        document.getElementById('totalCitations').textContent = citations;
+    }
+
+    async function downloadDOCX() {
+        const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, Packer, Table, TableRow, TableCell, WidthType } = docx;
+        const children = [];
+        
+        children.push(new Paragraph({
+            text: proposalTitle || "Grant Proposal",
+            heading: HeadingLevel.TITLE,
+            alignment: AlignmentType.CENTER,
+            spacing: { after: 400 }
+        }));
+
+        if (proposalKeywords) {
+            children.push(new Paragraph({
+                children: [
+                    new TextRun({ text: "Keywords: ", bold: true }),
+                    new TextRun(proposalKeywords)
+                ],
+                alignment: AlignmentType.CENTER,
+                spacing: { after: 600 }
+            }));
+        }
+
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = proposalDoc.innerHTML;
+        const elements = tempDiv.querySelectorAll('.section-heading, .subsection-heading, .paragraph, .reference-item, table.academic-table');
+        
+        elements.forEach(el => {
+            if (el.tagName === 'TABLE') {
+                const rows = Array.from(el.querySelectorAll('tr'));
+                const tableRows = rows.map(row => {
+                    const cells = Array.from(row.querySelectorAll('th, td'));
+                    return new TableRow({
+                        children: cells.map(cell => new TableCell({
+                            children: [new Paragraph(cell.textContent.trim())],
+                            width: { size: 100 / cells.length, type: WidthType.PERCENTAGE }
+                        }))
+                    });
+                });
+                children.push(new Table({ rows: tableRows }));
+                return;
+            }
+
+            const text = el.textContent.trim();
+            if (!text) return;
+
+            if (el.classList.contains('section-heading')) {
+                children.push(new Paragraph({
+                    text: text,
+                    heading: HeadingLevel.HEADING_1,
+                    spacing: { before: 400, after: 200 }
+                }));
+            } 
+            else if (el.classList.contains('subsection-heading')) {
+                children.push(new Paragraph({
+                    text: text,
+                    heading: HeadingLevel.HEADING_2,
+                    spacing: { before: 300, after: 150 }
+                }));
+            }
+            else if (el.classList.contains('paragraph')) {
+                const cleanText = text.replace(/\[\d+(,\s*\d+)*\]/g, '');
+                children.push(new Paragraph({
+                    children: [new TextRun(cleanText)],
+                    spacing: { after: 200 },
+                    alignment: AlignmentType.JUSTIFIED
+                }));
+            }
+            else if (el.classList.contains('reference-item')) {
+                children.push(new Paragraph({
+                    children: [new TextRun({ text: text, size: 20 })],
+                    spacing: { after: 150 }
+                }));
+            }
+        });
+
+        const doc = new Document({
+            sections: [{
+                properties: {
+                    page: {
+                        margin: {
+                            top: 1440,
+                            right: 1440,
+                            bottom: 1440,
+                            left: 1440
+                        }
+                    }
+                },
+                children: children
+            }]
+        });
+
+        try {
+            const blob = await Packer.toBlob(doc);
+            const filename = `${proposalTitle.replace(/[^a-z0-9]/gi, '_')}_Grant_Proposal.docx`;
+            saveAs(blob, filename);
+            showStatus('Document downloaded successfully!');
+        } catch (error) {
+            showStatus('Download failed: ' + error.message);
+        }
+    }
+
+    function copyText() {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = proposalDoc.innerHTML;
+        const elements = tempDiv.querySelectorAll('.section-heading, .subsection-heading, .paragraph, .reference-item');
+        let textContent = '';
+        
+        elements.forEach(el => {
+            const text = el.textContent.trim();
+            if (text) {
+                if (el.classList.contains('section-heading')) {
+                    textContent += '\n\n' + text.toUpperCase() + '\n' + '='.repeat(80) + '\n\n';
+                } else if (el.classList.contains('subsection-heading')) {
+                    textContent += '\n' + text + '\n' + '-'.repeat(60) + '\n\n';
+                } else {
+                    textContent += text + '\n\n';
+                }
+            }
+        });
+        
+        navigator.clipboard.writeText(textContent.trim()).then(() => {
+            showStatus('Copied to clipboard!');
+        }).catch(err => {
+            showStatus('Copy failed: ' + err.message);
+        });
+    }
+</script>
+{% endblock %}
