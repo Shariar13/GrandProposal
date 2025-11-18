@@ -1,0 +1,64 @@
+{% extends "base_new.html" %}
+
+{% block title %}Analytics - Grant Proposal Generator{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Your Analytics</h1>
+
+    <!-- Stats -->
+    <div class="grid grid-4 mt-2">
+        <div class="card text-center">
+            <h3 style="color: var(--primary-blue);">{{ total_proposals }}</h3>
+            <p class="text-muted">Total Proposals</p>
+        </div>
+        <div class="card text-center">
+            <h3 style="color: var(--accent-teal);">{{ total_words|floatformat:0 }}</h3>
+            <p class="text-muted">Total Words</p>
+        </div>
+        <div class="card text-center">
+            <h3 style="color: var(--accent-purple);">{{ total_citations }}</h3>
+            <p class="text-muted">Total Citations</p>
+        </div>
+        <div class="card text-center">
+            <h3 style="color: var(--accent-gold);">{{ profile.total_proposals_generated }}</h3>
+            <p class="text-muted">AI Generated</p>
+        </div>
+    </div>
+
+    <!-- Proposals by Type -->
+    {% if proposals_by_type %}
+    <div class="card mt-2">
+        <h2>Proposals by Type</h2>
+        {% for type_name, count in proposals_by_type.items %}
+        <div style="padding: var(--spacing-md); border-bottom: 1px solid var(--gray-200);">
+            <div class="flex justify-between">
+                <span>{{ type_name }}</span>
+                <span class="badge badge-primary">{{ count }}</span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Recent Activity -->
+    <div class="card mt-2">
+        <h2>Recent Activity</h2>
+        {% for activity in recent_analytics %}
+        <div style="padding: var(--spacing-md); border-bottom: 1px solid var(--gray-200);">
+            <div class="flex justify-between items-center">
+                <div>
+                    <strong>{{ activity.get_action_display }}</strong>
+                    {% if activity.proposal %}
+                    <span class="text-muted">- {{ activity.proposal.title|truncatewords:8 }}</span>
+                    {% endif %}
+                </div>
+                <span class="text-muted">{{ activity.created_at|date:"M d, Y H:i" }}</span>
+            </div>
+        </div>
+        {% empty %}
+        <p class="text-muted text-center">No activity yet</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

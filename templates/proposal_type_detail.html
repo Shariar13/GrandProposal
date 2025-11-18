@@ -1,0 +1,463 @@
+{% extends "base_new.html" %}
+
+{% block title %}{{ proposal_type.name }} - Grant Proposal Generator{% endblock %}
+
+{% block extra_css %}
+<style>
+    .proposal-type-header {
+        background: linear-gradient(135deg, var(--primary-navy), var(--primary-blue));
+        color: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-xl);
+        margin-bottom: var(--spacing-2xl);
+    }
+
+    .proposal-type-header h1 {
+        color: white;
+        margin-bottom: var(--spacing-md);
+    }
+
+    .meta-info {
+        display: flex;
+        gap: var(--spacing-2xl);
+        margin-top: var(--spacing-lg);
+        flex-wrap: wrap;
+    }
+
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+        font-size: 1rem;
+        opacity: 0.95;
+    }
+
+    .requirements-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: var(--spacing-xl);
+        margin-bottom: var(--spacing-2xl);
+    }
+
+    .requirement-card {
+        background: white;
+        padding: var(--spacing-xl);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+    }
+
+    .requirement-card h3 {
+        color: var(--primary-blue);
+        margin-bottom: var(--spacing-md);
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+
+    .requirement-list {
+        list-style: none;
+        padding: 0;
+    }
+
+    .requirement-list li {
+        padding: var(--spacing-sm) 0;
+        display: flex;
+        align-items: start;
+        gap: var(--spacing-sm);
+    }
+
+    .requirement-list li:before {
+        content: "✓";
+        color: var(--success);
+        font-weight: bold;
+    }
+
+    .sections-list {
+        background: white;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        overflow: hidden;
+    }
+
+    .section-item {
+        padding: var(--spacing-lg);
+        border-bottom: 1px solid var(--gray-200);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-item:last-child {
+        border-bottom: none;
+    }
+
+    .section-info h4 {
+        margin-bottom: var(--spacing-xs);
+        color: var(--gray-900);
+    }
+
+    .section-info p {
+        color: var(--gray-600);
+        font-size: 0.9375rem;
+        margin: 0;
+    }
+
+    .section-meta {
+        display: flex;
+        gap: var(--spacing-lg);
+        font-size: 0.875rem;
+        color: var(--gray-500);
+    }
+
+    .generation-form {
+        background: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        margin-top: var(--spacing-2xl);
+    }
+
+    .progress-container {
+        display: none;
+        margin-top: var(--spacing-xl);
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 30px;
+        background: var(--gray-200);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        position: relative;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary-blue), var(--accent-teal));
+        transition: width 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 500;
+    }
+
+    .status-message {
+        margin-top: var(--spacing-md);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        background: var(--gray-50);
+        font-size: 0.9375rem;
+    }
+
+    #proposalOutput {
+        display: none;
+        margin-top: var(--spacing-2xl);
+        background: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+    }
+
+    .proposal-content {
+        max-height: 600px;
+        overflow-y: auto;
+        padding: var(--spacing-lg);
+        background: var(--gray-50);
+        border-radius: var(--radius-md);
+        font-family: var(--font-serif);
+        line-height: 1.8;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Proposal Type Header -->
+    <div class="proposal-type-header">
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary" style="margin-bottom: var(--spacing-md);">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+        <h1>{{ proposal_type.name }}</h1>
+        <p>{{ proposal_type.description }}</p>
+        <div class="meta-info">
+            <div class="meta-item">
+                <i class="fas fa-file-alt"></i>
+                <span>{{ proposal_type.min_pages }}-{{ proposal_type.max_pages }} pages</span>
+            </div>
+            <div class="meta-item">
+                <i class="fas fa-list-check"></i>
+                <span>{{ templates.count }} sections</span>
+            </div>
+            {% if proposal_type.guidelines_url %}
+            <div class="meta-item">
+                <i class="fas fa-link"></i>
+                <a href="{{ proposal_type.guidelines_url }}" target="_blank" style="color: white;">Official Guidelines</a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Requirements -->
+    <div class="requirements-grid">
+        <div class="requirement-card">
+            <h3><i class="fas fa-check-circle"></i> Required Sections</h3>
+            <ul class="requirement-list">
+                {% for section in proposal_type.required_sections %}
+                <li>{{ section }}</li>
+                {% empty %}
+                <li>No specific requirements listed</li>
+                {% endfor %}
+            </ul>
+        </div>
+
+        <div class="requirement-card">
+            <h3><i class="fas fa-info-circle"></i> Optional Sections</h3>
+            <ul class="requirement-list">
+                {% for section in proposal_type.optional_sections %}
+                <li>{{ section }}</li>
+                {% empty %}
+                <li>No optional sections</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+
+    <!-- Section Templates -->
+    <div class="card">
+        <div class="card-header">
+            <i class="fas fa-list"></i> Proposal Sections ({{ templates.count }})
+        </div>
+        <div class="sections-list">
+            {% for template in templates %}
+            <div class="section-item">
+                <div class="section-info">
+                    <h4>{{ template.section_order }}. {{ template.section_name }} {% if template.is_required %}<span class="badge badge-primary">Required</span>{% endif %}</h4>
+                    <p>{{ template.description|truncatewords:20 }}</p>
+                </div>
+                <div class="section-meta">
+                    <span><i class="fas fa-text-width"></i> {{ template.min_words }}-{{ template.max_words }} words</span>
+                </div>
+            </div>
+            {% empty %}
+            <div class="section-item">
+                <p class="text-muted">No section templates configured yet.</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Generation Form -->
+    <div class="generation-form">
+        <h2>Generate Your {{ proposal_type.name }} Proposal</h2>
+        <p class="text-muted">Provide your research details below and our AI will generate a complete proposal with citations from academic literature.</p>
+
+        <form id="generateForm" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="proposal_type_id" value="{{ proposal_type.id }}">
+
+            <div class="form-group">
+                <label class="form-label" for="title">
+                    <i class="fas fa-heading"></i> Research Title *
+                </label>
+                <input type="text" id="title" name="title" class="form-input" required
+                       placeholder="e.g., Advanced Deep Learning for Deepfake Detection">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="keywords">
+                    <i class="fas fa-tags"></i> Keywords
+                </label>
+                <input type="text" id="keywords" name="keywords" class="form-input"
+                       placeholder="e.g., deep learning, computer vision, deepfake detection, AI">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="description">
+                    <i class="fas fa-align-left"></i> Research Description *
+                </label>
+                <textarea id="description" name="description" class="form-textarea" required
+                          placeholder="Describe your research project, objectives, methodology, and expected outcomes. Be as detailed as possible for better results."></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-large" id="generateBtn">
+                <i class="fas fa-magic"></i>
+                Generate Proposal
+            </button>
+        </form>
+
+        <!-- Progress -->
+        <div class="progress-container" id="progressContainer">
+            <h3>Generating Your Proposal...</h3>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
+            </div>
+            <div class="status-message" id="statusMessage">Initializing...</div>
+        </div>
+    </div>
+
+    <!-- Proposal Output -->
+    <div id="proposalOutput">
+        <div class="flex justify-between items-center mb-2">
+            <h2>Generated Proposal</h2>
+            <div class="flex gap-1">
+                <button class="btn btn-secondary" onclick="saveProposal()">
+                    <i class="fas fa-save"></i> Save
+                </button>
+                <button class="btn btn-secondary" onclick="exportProposal()">
+                    <i class="fas fa-download"></i> Export
+                </button>
+            </div>
+        </div>
+        <div class="proposal-content" id="proposalContent"></div>
+    </div>
+</div>
+
+<script>
+    const form = document.getElementById('generateForm');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const statusMessage = document.getElementById('statusMessage');
+    const proposalOutput = document.getElementById('proposalOutput');
+    const proposalContent = document.getElementById('proposalContent');
+    const generateBtn = document.getElementById('generateBtn');
+
+    let currentProposalData = null;
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        // Show progress
+        progressContainer.style.display = 'block';
+        generateBtn.disabled = true;
+        proposalOutput.style.display = 'none';
+
+        const formData = new FormData(form);
+
+        try {
+            const response = await fetch('{% url "generate_proposal_new" %}', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': formData.get('csrfmiddlewaretoken')
+                }
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.slice(6));
+                        handleProgressUpdate(data);
+                    }
+                }
+            }
+        } catch (error) {
+            statusMessage.innerHTML = `<span style="color: var(--error);">Error: ${error.message}</span>`;
+            generateBtn.disabled = false;
+        }
+    });
+
+    function handleProgressUpdate(data) {
+        if (data.type === 'phase') {
+            statusMessage.textContent = data.message;
+            if (data.phase === 'rag') {
+                updateProgress(25, 'Collecting research data...');
+            } else if (data.phase === 'generation') {
+                updateProgress(50, 'Generating proposal...');
+            }
+        } else if (data.type === 'rag_complete') {
+            statusMessage.textContent = data.message;
+            updateProgress(50, `Found ${data.total_papers} papers`);
+        } else if (data.type === 'section_start') {
+            const progress = 50 + (data.section_number / data.total_sections) * 40;
+            updateProgress(progress, `Generating: ${data.section_name}`);
+        } else if (data.type === 'section_complete') {
+            const progress = 50 + (data.section_number / data.total_sections) * 40;
+            updateProgress(progress, `Completed: ${data.section_name}`);
+        } else if (data.type === 'complete') {
+            updateProgress(100, 'Complete!');
+            currentProposalData = data;
+            displayProposal(data);
+            generateBtn.disabled = false;
+        } else if (data.type === 'error') {
+            statusMessage.innerHTML = `<span style="color: var(--error);">${data.message}</span>`;
+            generateBtn.disabled = false;
+        }
+    }
+
+    function updateProgress(percent, message) {
+        progressFill.style.width = percent + '%';
+        progressFill.textContent = Math.round(percent) + '%';
+        if (message) {
+            statusMessage.textContent = message;
+        }
+    }
+
+    function displayProposal(data) {
+        proposalContent.innerHTML = `
+            <div style="white-space: pre-wrap;">${data.full_proposal || 'Proposal generated successfully!'}</div>
+        `;
+        proposalOutput.style.display = 'block';
+        proposalOutput.scrollIntoView({behavior: 'smooth'});
+    }
+
+    async function saveProposal() {
+        if (!currentProposalData) return;
+
+        const title = document.getElementById('title').value;
+        const keywords = document.getElementById('keywords').value;
+        const description = document.getElementById('description').value;
+
+        try {
+            const response = await fetch('{% url "save_proposal" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: JSON.stringify({
+                    proposal_type_id: {{ proposal_type.id }},
+                    title: title,
+                    keywords: keywords,
+                    description: description,
+                    content: currentProposalData.full_proposal,
+                    content_json: currentProposalData.metadata,
+                    rag_data: {}
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                alert('Proposal saved successfully!');
+            } else {
+                alert('Error saving proposal: ' + result.error);
+            }
+        } catch (error) {
+            alert('Error saving proposal: ' + error.message);
+        }
+    }
+
+    function exportProposal() {
+        if (!currentProposalData) return;
+
+        const blob = new Blob([currentProposalData.full_proposal], {type: 'text/plain'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = document.getElementById('title').value + '.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+</script>
+{% endblock %}
