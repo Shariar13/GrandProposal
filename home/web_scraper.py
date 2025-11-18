@@ -11,6 +11,18 @@ import time
 from typing import Dict, List, Any
 from fake_useragent import UserAgent
 import json
+import nltk
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    nltk.download('punkt_tab', quiet=True)
+
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
 
 
 class WebScraperSystem:

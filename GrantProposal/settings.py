@@ -136,10 +136,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
 
-OPENAI_API_KEY = os.environ.get(
-    'OPENAI_API_KEY',
-    
-)
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 
 # OpenAI Model Configuration
 OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
