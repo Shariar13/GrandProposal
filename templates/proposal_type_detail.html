@@ -335,7 +335,7 @@
         const formData = new FormData(form);
 
         try {
-            const response = await fetch('{% url "generate_proposal_new" %}', {
+            const response = await fetch('{% url "generate_proposal_comprehensive" %}', {
                 method: 'POST',
                 body: formData,
                 headers: {

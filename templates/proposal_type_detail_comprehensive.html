@@ -1,0 +1,352 @@
+{% extends "base_new.html" %}
+
+{% block title %}{{ proposal_type.name }} - Grant Proposal Generator{% endblock %}
+
+{% block extra_css %}
+<style>
+    .proposal-type-header {
+        background: linear-gradient(135deg, var(--primary-navy), var(--primary-blue));
+        color: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-xl);
+        margin-bottom: var(--spacing-2xl);
+    }
+
+    .proposal-type-header h1 {
+        color: white;
+    }
+
+    .generation-form {
+        background: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        margin-top: var(--spacing-2xl);
+    }
+
+    .progress-container {
+        display: none;
+        margin-top: var(--spacing-xl);
+        background: var(--gray-50);
+        padding: var(--spacing-xl);
+        border-radius: var(--radius-lg);
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 40px;
+        background: var(--gray-200);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        position: relative;
+        margin-bottom: var(--spacing-md);
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary-blue), var(--accent-teal));
+        transition: width 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-weight: 600;
+    }
+
+    .status-message {
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        background: white;
+        font-size: 1rem;
+    }
+
+    .phase-indicator {
+        display: flex;
+        gap: var(--spacing-md);
+        margin-bottom: var(--spacing-lg);
+    }
+
+    .phase-step {
+        flex: 1;
+        text-align: center;
+        padding: var(--spacing-md);
+        border-radius: var(--radius-md);
+        background: var(--gray-200);
+        transition: all 0.3s;
+    }
+
+    .phase-step.active {
+        background: var(--primary-blue);
+        color: white;
+        transform: scale(1.05);
+    }
+
+    .phase-step.completed {
+        background: var(--success);
+        color: white;
+    }
+
+    #proposalOutput {
+        display: none;
+        margin-top: var(--spacing-2xl);
+    }
+
+    .proposal-viewer {
+        background: white;
+        padding: var(--spacing-2xl);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="proposal-type-header">
+        <a href="{% url 'dashboard' %}" class="btn btn-secondary" style="margin-bottom: var(--spacing-md);">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+        <h1>{{ proposal_type.name }}</h1>
+        <p>{{ proposal_type.description }}</p>
+    </div>
+
+    <div class="generation-form">
+        <h2>Generate Your Proposal</h2>
+        <p class="text-muted">Our AI will search academic databases + web sources, generate professional tables & graphs, and create a complete proposal with perfect citations.</p>
+
+        <form id="generateForm" method="post">
+            {% csrf_token %}
+            <input type="hidden" name="proposal_type_id" value="{{ proposal_type.id }}">
+
+            <div class="form-group">
+                <label class="form-label" for="title">
+                    <i class="fas fa-heading"></i> Research Title *
+                </label>
+                <input type="text" id="title" name="title" class="form-input" required
+                       placeholder="e.g., AI-Powered Climate Change Prediction using Deep Learning">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="keywords">
+                    <i class="fas fa-tags"></i> Keywords
+                </label>
+                <input type="text" id="keywords" name="keywords" class="form-input"
+                       placeholder="e.g., artificial intelligence, climate modeling, deep learning, prediction">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="description">
+                    <i class="fas fa-align-left"></i> Research Description *
+                </label>
+                <textarea id="description" name="description" class="form-textarea" required
+                          placeholder="Describe your research project in detail..."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="custom_urls">
+                    <i class="fas fa-link"></i> Custom URLs (Optional)
+                </label>
+                <textarea id="custom_urls" name="custom_urls" class="form-textarea" rows="3"
+                          placeholder="Add URLs to specific papers, articles, or resources (one per line)"></textarea>
+                <small class="text-muted">Our system will extract and analyze content from these URLs</small>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">
+                    <input type="checkbox" name="include_news" value="true" checked>
+                    Include news sources (BBC, Reuters, ScienceDaily)
+                </label>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-large" id="generateBtn">
+                <i class="fas fa-rocket"></i>
+                Generate Complete Proposal with AI
+            </button>
+        </form>
+
+        <!-- Progress Container -->
+        <div class="progress-container" id="progressContainer">
+            <h3>Generating Your Professional Proposal...</h3>
+
+            <!-- Phase Indicators -->
+            <div class="phase-indicator">
+                <div class="phase-step" id="phase-rag">
+                    <i class="fas fa-search"></i>
+                    <div>Research</div>
+                </div>
+                <div class="phase-step" id="phase-visuals">
+                    <i class="fas fa-chart-bar"></i>
+                    <div>Visuals</div>
+                </div>
+                <div class="phase-step" id="phase-generation">
+                    <i class="fas fa-robot"></i>
+                    <div>AI Writing</div>
+                </div>
+                <div class="phase-step" id="phase-saving">
+                    <i class="fas fa-save"></i>
+                    <div>Saving</div>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
+            </div>
+
+            <!-- Status Message -->
+            <div class="status-message" id="statusMessage">Initializing...</div>
+        </div>
+    </div>
+
+    <!-- Proposal Output -->
+    <div id="proposalOutput">
+        <div class="proposal-viewer">
+            <div class="flex justify-between items-center mb-2">
+                <h2>Your Generated Proposal</h2>
+                <div class="flex gap-1">
+                    <a href="#" id="viewProposalBtn" class="btn btn-primary">
+                        <i class="fas fa-eye"></i> View Full Proposal
+                    </a>
+                </div>
+            </div>
+            <div id="proposalSummary"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const form = document.getElementById('generateForm');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const statusMessage = document.getElementById('statusMessage');
+    const proposalOutput = document.getElementById('proposalOutput');
+    const generateBtn = document.getElementById('generateBtn');
+
+    let currentProposalId = null;
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        // Show progress
+        progressContainer.style.display = 'block';
+        generateBtn.disabled = true;
+        proposalOutput.style.display = 'none';
+
+        const formData = new FormData(form);
+
+        try {
+            const response = await fetch('{% url "generate_proposal_comprehensive" %}', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': formData.get('csrfmiddlewaretoken')
+                }
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const data = JSON.parse(line.slice(6));
+                        handleProgressUpdate(data);
+                    }
+                }
+            }
+        } catch (error) {
+            statusMessage.innerHTML = `<span style="color: var(--error);">Error: ${error.message}</span>`;
+            generateBtn.disabled = false;
+        }
+    });
+
+    function handleProgressUpdate(data) {
+        // Update phase indicators
+        if (data.type === 'phase') {
+            updatePhaseIndicator(data.phase);
+            statusMessage.textContent = data.message;
+        }
+
+        // Progress updates
+        if (data.type === 'rag_complete') {
+            updateProgress(40, data.message);
+            markPhaseCompleted('rag');
+        } else if (data.type === 'visuals_complete') {
+            updateProgress(60, data.message);
+            markPhaseCompleted('visuals');
+        } else if (data.type === 'section_start') {
+            const progress = 60 + (data.section_number / data.total_sections) * 20;
+            updateProgress(progress, `Writing: ${data.section_name}`);
+        } else if (data.type === 'section_complete') {
+            statusMessage.textContent = `✓ Completed: ${data.section_name}`;
+        } else if (data.type === 'complete') {
+            updateProgress(100, '✓ Complete!');
+            markPhaseCompleted('saving');
+            currentProposalId = data.proposal_id;
+            displayProposal(data);
+            generateBtn.disabled = false;
+        } else if (data.type === 'error') {
+            statusMessage.innerHTML = `<span style="color: var(--error);">${data.message}</span>`;
+            generateBtn.disabled = false;
+        }
+    }
+
+    function updatePhaseIndicator(phase) {
+        const phaseElement = document.getElementById(`phase-${phase}`);
+        if (phaseElement) {
+            document.querySelectorAll('.phase-step').forEach(el => el.classList.remove('active'));
+            phaseElement.classList.add('active');
+        }
+    }
+
+    function markPhaseCompleted(phase) {
+        const phaseElement = document.getElementById(`phase-${phase}`);
+        if (phaseElement) {
+            phaseElement.classList.remove('active');
+            phaseElement.classList.add('completed');
+        }
+    }
+
+    function updateProgress(percent, message) {
+        progressFill.style.width = percent + '%';
+        progressFill.textContent = Math.round(percent) + '%';
+        if (message) {
+            statusMessage.textContent = message;
+        }
+    }
+
+    function displayProposal(data) {
+        const summary = document.getElementById('proposalSummary');
+        summary.innerHTML = `
+            <div class="grid grid-3" style="margin-bottom: var(--spacing-lg);">
+                <div class="card">
+                    <h4>${data.metadata.word_count}</h4>
+                    <p>Total Words</p>
+                </div>
+                <div class="card">
+                    <h4>${data.metadata.citation_count}</h4>
+                    <p>Citations</p>
+                </div>
+                <div class="card">
+                    <h4>${data.visuals.count}</h4>
+                    <p>Figures & Tables</p>
+                </div>
+            </div>
+            <p><strong>Your proposal has been generated and saved!</strong></p>
+            <p>Total sections: ${data.metadata.sections.length}</p>
+        `;
+
+        document.getElementById('viewProposalBtn').href = `/proposal/${currentProposalId}/`;
+        proposalOutput.style.display = 'block';
+        proposalOutput.scrollIntoView({behavior: 'smooth'});
+    }
+</script>
+{% endblock %}
